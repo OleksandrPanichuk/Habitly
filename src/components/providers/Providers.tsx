@@ -7,7 +7,7 @@ import { TRPCReactProvider } from "@/trpc/client";
 export const Providers = ({ children }: PropsWithChildren) => {
   return (
     <TRPCReactProvider>
-      <HeroUIProvider>{children}</HeroUIProvider>;
+      <HeroUIProvider>{children}</HeroUIProvider>
     </TRPCReactProvider>
   );
 };

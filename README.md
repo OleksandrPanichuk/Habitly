@@ -186,7 +186,7 @@ habitly/
 │   ├── db/                    # Database layer
 │   │   ├── index.ts          # Database client
 │   │   └── schema.ts         # Drizzle schema definitions
-│   ├── libs/                  # Third-party integrations
+│   ├── lib/                  # Third-party integrations
 │   │   ├── auth.ts           # Better Auth setup
 │   │   └── auth-client.ts    # Better Auth client
 │   └── trpc/                  # tRPC configuration
