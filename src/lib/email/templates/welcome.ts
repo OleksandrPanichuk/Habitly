@@ -116,7 +116,7 @@ export function getWelcomeHtml({
 
 export function getWelcomeText({
   userName,
-  loginUrl = "https://habitly.app/sign-in",
+  dashboardUrl = "https://localhost:3000/dashboard",
 }: WelcomeTemplateData): string {
   return `
 Welcome to Habitly! 🎉
@@ -133,7 +133,7 @@ Get Started:
 🎯 Achieve your goals - Build consistency over time
 
 Go to your dashboard:
-${loginUrl}
+${dashboardUrl}
 
 If you have any questions or need help getting started, don't hesitate to reach out to our support team.
 
