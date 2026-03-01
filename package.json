@@ -26,7 +26,7 @@
     "mailgun.js": "^12.7.0",
     "next": "16.1.6",
     "novel": "^1.0.2",
-    "pg": "^8.18.0",
+    "postgres": "^3.4.8",
     "react": "19.2.3",
     "react-calendar-heatmap": "^1.10.0",
     "react-dom": "19.2.3",

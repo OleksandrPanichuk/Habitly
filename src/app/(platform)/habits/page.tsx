@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import { HabitsView } from "@/features/habits";
 import { getQueryClient, HydrateClient, trpc } from "@/trpc/server";
+
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+    title: "Habits",
+};
 
 const Page = async () => {
     const queryClient = getQueryClient();

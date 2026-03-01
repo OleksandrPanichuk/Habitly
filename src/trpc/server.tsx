@@ -1,5 +1,4 @@
 import { dehydrate, HydrationBoundary } from "@tanstack/react-query";
-import { createTRPCClient, httpLink } from "@trpc/client";
 import {
     createTRPCOptionsProxy,
     type TRPCQueryOptions,
@@ -19,13 +18,6 @@ export const trpc = createTRPCOptionsProxy({
 });
 
 export const caller = appRouter.createCaller(createTRPCContextForRSC);
-
-createTRPCOptionsProxy({
-    client: createTRPCClient({
-        links: [httpLink({ url: "..." })],
-    }),
-    queryClient: getQueryClient,
-});
 
 export function HydrateClient(props: { children: React.ReactNode }) {
     const queryClient = getQueryClient();
