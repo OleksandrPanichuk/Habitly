@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32"><svg xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Mimics: bg-linear-to-br from-primary to-secondary -->
+    <linearGradient id="logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="var(--color-primary, #3b82f6)"></stop>
+      <stop offset="100%" stop-color="var(--color-secondary, #8b5cf6)"></stop>
+    </linearGradient>
+  </defs>
+  
+  <!-- Mimics: w-8 h-8 rounded-lg -->
+  <rect width="32" height="32" rx="8" fill="url(#logo-gradient)"></rect>
+  
+  <!-- Mimics: The bold white "H" centered inside the div (converted to pure vector path) -->
+  <path fill="white" d="M10.5 10h2.5v4.75h6V10h2.5v12h-2.5v-4.75h-6V22h-2.5V10z"></path>
+</svg></svg><style>@media (prefers-color-scheme: light) { :root { filter: none; } }
+@media (prefers-color-scheme: dark) { :root { filter: none; } }
+</style></svg>
