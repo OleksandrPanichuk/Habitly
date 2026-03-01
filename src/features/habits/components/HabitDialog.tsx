@@ -119,8 +119,7 @@ export const HabitDialog = ({
                     </ModalHeader>
 
                     <ModalBody className="gap-4">
-                        <div className="flex gap-3 items-start">
-                            {/* Emoji icon picker */}
+                        <div className="flex gap-3 items-end">
                             <div className="flex flex-col gap-1.5 shrink-0">
                                 <span className="text-sm font-medium opacity-0 select-none">
                                     Icon
