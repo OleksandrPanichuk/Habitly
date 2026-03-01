@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { HabitsView } from "@/features/habits";
-import { getQueryClient, HydrateClient, trpc } from "@/trpc/server";
+import { HydrateClient, prefetch, trpc } from "@/trpc/server";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,6 @@ export const metadata: Metadata = {
 };
 
 const Page = async () => {
-    const queryClient = getQueryClient();
     const now = new Date();
     const date = new Date(
         Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()),
@@ -19,17 +18,13 @@ const Page = async () => {
         Date.UTC(now.getFullYear(), now.getMonth(), now.getDate() - 90),
     );
 
-    await Promise.all([
-        queryClient.prefetchQuery(
-            trpc.habits.list.queryOptions({ date, includeArchived: false }),
-        ),
-        queryClient.prefetchQuery(
-            trpc.completions.getByDateRange.queryOptions({
-                startDate: streakStart,
-                endDate: date,
-            }),
-        ),
-    ]);
+    prefetch(trpc.habits.list.queryOptions({ date, includeArchived: false }));
+    prefetch(
+        trpc.completions.getByDateRange.queryOptions({
+            startDate: streakStart,
+            endDate: date,
+        }),
+    );
 
     return (
         <HydrateClient>

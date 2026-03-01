@@ -2,13 +2,14 @@
 
 import { Button, Chip, Tooltip } from "@heroui/react";
 import {
+    keepPreviousData,
     useMutation,
+    useQuery,
     useQueryClient,
-    useSuspenseQuery,
 } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArchiveIcon, LayoutTemplateIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { HABIT_CATEGORIES } from "@/features/habits/constants";
@@ -59,9 +60,13 @@ export const HabitsView = ({ date: initialDate }: { date: string }) => {
     const [statsOpen, setStatsOpen] = useState(false);
     const [showArchived, setShowArchived] = useState(false);
 
-    const { data: habits } = useSuspenseQuery(
-        trpc.habits.list.queryOptions({ date, includeArchived: showArchived }),
-    );
+    const { data: habits = [] } = useQuery({
+        ...trpc.habits.list.queryOptions({
+            date,
+            includeArchived: showArchived,
+        }),
+        placeholderData: keepPreviousData,
+    });
 
     const streakStart = useMemo(
         () =>
@@ -86,12 +91,37 @@ export const HabitsView = ({ date: initialDate }: { date: string }) => {
         [date],
     );
 
-    const { data: rangeCompletions } = useSuspenseQuery(
-        trpc.completions.getByDateRange.queryOptions({
+    const { data: rangeCompletions = [] } = useQuery({
+        ...trpc.completions.getByDateRange.queryOptions({
             startDate: streakStart,
             endDate: streakEnd,
         }),
+        placeholderData: keepPreviousData,
+    });
+
+    const prefetchDate = useCallback(
+        (d: Date) => {
+            const utc = new Date(
+                Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+            );
+            void queryClient.prefetchQuery(
+                trpc.habits.list.queryOptions({
+                    date: utc,
+                    includeArchived: showArchived,
+                }),
+            );
+        },
+        [queryClient, trpc, showArchived],
     );
+
+    useEffect(() => {
+        const prev = new Date(date);
+        prev.setUTCDate(prev.getUTCDate() - 1);
+        const next = new Date(date);
+        next.setUTCDate(next.getUTCDate() + 1);
+        prefetchDate(prev);
+        prefetchDate(next);
+    }, [date, prefetchDate]);
 
     const streaks = useMemo(() => {
         const allDates = getDatesInRange(streakStart, streakEnd);
