@@ -1,5 +1,11 @@
 import type { THabit } from "@/db/schema";
 
+
+export function parseDateKey(dateKey: string): Date {
+    const [year, month, day] = dateKey.split("-").map(Number);
+    return new Date(year, month - 1, day);
+}
+
 export function toDateKey(date: Date): string {
     const y = date.getUTCFullYear();
     const m = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -26,7 +32,52 @@ export function getDatesInRange(start: Date, end: Date): Date[] {
     return dates;
 }
 
-export function isHabitScheduledOn(habit: THabit, date: Date): boolean {
+export function getEffectiveStart(
+    habit: THabit,
+    firstCompletionDate?: Date,
+): Date {
+    const createdUtc = new Date(
+        Date.UTC(
+            habit.createdAt.getUTCFullYear(),
+            habit.createdAt.getUTCMonth(),
+            habit.createdAt.getUTCDate(),
+        ),
+    );
+
+    if (!firstCompletionDate) return createdUtc;
+
+    const firstCompletionUtc = new Date(
+        Date.UTC(
+            firstCompletionDate.getUTCFullYear(),
+            firstCompletionDate.getUTCMonth(),
+            firstCompletionDate.getUTCDate(),
+        ),
+    );
+
+    return firstCompletionUtc < createdUtc ? firstCompletionUtc : createdUtc;
+}
+
+export function isHabitScheduledOn(
+    habit: THabit,
+    date: Date,
+    effectiveStart?: Date,
+): boolean {
+    const floorDate =
+        effectiveStart ??
+        new Date(
+            Date.UTC(
+                habit.createdAt.getUTCFullYear(),
+                habit.createdAt.getUTCMonth(),
+                habit.createdAt.getUTCDate(),
+            ),
+        );
+
+    const dateNorm = new Date(
+        Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    );
+
+    if (dateNorm < floorDate) return false;
+
     const dayOfWeek = date.getUTCDay();
 
     switch (habit.frequencyType) {
@@ -39,9 +90,9 @@ export function isHabitScheduledOn(habit: THabit, date: Date): boolean {
 
             const habitStart = new Date(
                 Date.UTC(
-                    habit.createdAt.getFullYear(),
-                    habit.createdAt.getMonth(),
-                    habit.createdAt.getDate(),
+                    habit.createdAt.getUTCFullYear(),
+                    habit.createdAt.getUTCMonth(),
+                    habit.createdAt.getUTCDate(),
                 ),
             );
 

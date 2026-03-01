@@ -1,7 +1,6 @@
 "use client";
 
 import { Button, Chip, Tooltip } from "@heroui/react";
-import { format, isToday, isYesterday } from "date-fns";
 import { motion } from "framer-motion";
 import {
     BarChart2Icon,
@@ -23,11 +22,84 @@ interface IHabitsHeaderProps {
     showArchived?: boolean;
 }
 
-function formatDateLabel(date: Date): string {
-    if (isToday(date)) return "Today";
-    if (isYesterday(date)) return "Yesterday";
+const DAY_NAMES = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 
-    return format(date, "EEEE, MMM d");
+const MONTH_NAMES_SHORT = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+];
+
+const MONTH_NAMES_LONG = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/** Returns a UTC-midnight Date representing today. */
+function utcToday(): Date {
+    const now = new Date();
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
+/** Formats a UTC-midnight date as "MMMM d, yyyy" using UTC getters. */
+function formatUtcLong(date: Date): string {
+    return `${MONTH_NAMES_LONG[date.getUTCMonth()]} ${date.getUTCDate()}, ${date.getUTCFullYear()}`;
+}
+
+/** Formats a UTC-midnight date as "EEEE, MMM d" using UTC getters. */
+function formatUtcLabel(date: Date): string {
+    return `${DAY_NAMES[date.getUTCDay()]}, ${MONTH_NAMES_SHORT[date.getUTCMonth()]} ${date.getUTCDate()}`;
+}
+
+function isSameUtcDay(a: Date, b: Date): boolean {
+    return (
+        a.getUTCFullYear() === b.getUTCFullYear() &&
+        a.getUTCMonth() === b.getUTCMonth() &&
+        a.getUTCDate() === b.getUTCDate()
+    );
+}
+
+function formatDateLabel(date: Date): string {
+    const today = utcToday();
+    if (isSameUtcDay(date, today)) return "Today";
+
+    const yesterday = new Date(
+        Date.UTC(
+            today.getUTCFullYear(),
+            today.getUTCMonth(),
+            today.getUTCDate() - 1,
+        ),
+    );
+    if (isSameUtcDay(date, yesterday)) return "Yesterday";
+
+    return formatUtcLabel(date);
 }
 
 function getMotivationalMessage(completed: number, total: number): string {
@@ -52,22 +124,34 @@ export const HabitsHeader = ({
     const progress =
         totalHabits > 0 ? Math.round((completedHabits / totalHabits) * 100) : 0;
     const dateLabel = formatDateLabel(date);
-    const todayFlag = isToday(date);
+    const todayFlag = isSameUtcDay(date, utcToday());
 
     const goBack = () => {
-        const d = new Date(date);
-        d.setDate(d.getDate() - 1);
-        onDateChange(d);
+        onDateChange(
+            new Date(
+                Date.UTC(
+                    date.getUTCFullYear(),
+                    date.getUTCMonth(),
+                    date.getUTCDate() - 1,
+                ),
+            ),
+        );
     };
 
     const goForward = () => {
         if (todayFlag) return;
-        const d = new Date(date);
-        d.setDate(d.getDate() + 1);
-        onDateChange(d);
+        onDateChange(
+            new Date(
+                Date.UTC(
+                    date.getUTCFullYear(),
+                    date.getUTCMonth(),
+                    date.getUTCDate() + 1,
+                ),
+            ),
+        );
     };
 
-    const goToday = () => onDateChange(new Date());
+    const goToday = () => onDateChange(utcToday());
 
     return (
         <div className="space-y-5">
@@ -87,16 +171,20 @@ export const HabitsHeader = ({
 
                     <div className="flex flex-col items-center w-48">
                         <motion.h2
-                            key={date.toDateString()}
+                            key={date.toISOString()}
                             initial={{ opacity: 0, y: -6 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.2 }}
                             className="text-xl font-bold text-foreground tracking-tight"
+                            suppressHydrationWarning
                         >
                             {dateLabel}
                         </motion.h2>
-                        <span className="text-xs text-foreground-400">
-                            {format(date, "MMMM d, yyyy")}
+                        <span
+                            className="text-xs text-foreground-400"
+                            suppressHydrationWarning
+                        >
+                            {formatUtcLong(date)}
                         </span>
                     </div>
 

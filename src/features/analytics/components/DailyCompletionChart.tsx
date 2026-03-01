@@ -12,6 +12,7 @@ import {
     XAxis,
     YAxis,
 } from "recharts";
+import { parseDateKey } from "@/lib/utils";
 
 interface DayData {
     date: string;
@@ -42,7 +43,7 @@ const CustomTooltip = ({ active, payload }: CustomTooltipProps) => {
     return (
         <div className="rounded-xl border border-white/15 bg-content1/95 backdrop-blur-sm px-3 py-2.5 shadow-xl text-xs space-y-1 min-w-[120px]">
             <p className="font-semibold text-foreground">
-                {format(new Date(d.date), "EEE, MMM d")}
+                {format(parseDateKey(d.date), "EEE, MMM d")}
             </p>
             <div className="flex items-center justify-between gap-4">
                 <span className="text-foreground-400">Completed</span>
@@ -138,7 +139,7 @@ export const DailyCompletionChart = ({ data }: IDailyCompletionChartProps) => {
                         axisLine={false}
                         tickLine={false}
                         tickFormatter={(v: string) =>
-                            format(new Date(v), "MMM d")
+                            format(parseDateKey(v), "MMM d")
                         }
                         interval={Math.ceil(sliced.length / 7) - 1}
                     />

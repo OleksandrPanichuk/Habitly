@@ -1,9 +1,11 @@
-import { and, asc, eq, gte, lte } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, min } from "drizzle-orm";
 import z from "zod";
+import type { THabit } from "@/db/schema";
 import { completions, habits } from "@/db/schema";
 import {
     calculateStreaks,
     getDatesInRange,
+    getEffectiveStart,
     isHabitScheduledOn,
     toDateKey,
 } from "@/lib/utils";
@@ -19,6 +21,40 @@ const analyticsRangeSchema = z
         path: ["endDate"],
     });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadEffectiveStartMap(
+    db: any,
+    userHabits: THabit[],
+): Promise<Map<string, Date>> {
+    const map = new Map<string, Date>();
+    if (userHabits.length === 0) return map;
+
+    const rows = await db
+        .select({
+            habitId: completions.habitId,
+            firstDate: min(completions.date),
+        })
+        .from(completions)
+        .where(
+            inArray(
+                completions.habitId,
+                userHabits.map((h) => h.id),
+            ),
+        )
+        .groupBy(completions.habitId);
+
+    for (const habit of userHabits) {
+        const row = rows.find(
+            (r: { habitId: string; firstDate: Date | null }) =>
+                r.habitId === habit.id,
+        );
+        const firstDate = row?.firstDate ?? undefined;
+        map.set(habit.id, getEffectiveStart(habit, firstDate));
+    }
+
+    return map;
+}
+
 export const analyticsRouter = createTRPCRouter({
     getDailyBreakdown: protectedProcedure
         .input(analyticsRangeSchema)
@@ -28,29 +64,32 @@ export const analyticsRouter = createTRPCRouter({
                 .from(habits)
                 .where(eq(habits.userId, ctx.user.id));
 
-            const rangeCompletions = await ctx.db
-                .select({
-                    id: completions.id,
-                    date: completions.date,
-                    habitId: completions.habitId,
-                })
-                .from(completions)
-                .innerJoin(habits, eq(habits.id, completions.habitId))
-                .where(
-                    and(
-                        eq(habits.userId, ctx.user.id),
-                        gte(completions.date, input.startDate),
-                        lte(completions.date, input.endDate),
-                    ),
-                )
-                .orderBy(asc(completions.date));
+            const [rangeCompletions, effectiveStartMap] = await Promise.all([
+                ctx.db
+                    .select({
+                        id: completions.id,
+                        date: completions.date,
+                        habitId: completions.habitId,
+                    })
+                    .from(completions)
+                    .innerJoin(habits, eq(habits.id, completions.habitId))
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            gte(completions.date, input.startDate),
+                            lte(completions.date, input.endDate),
+                        ),
+                    )
+                    .orderBy(asc(completions.date)),
+                loadEffectiveStartMap(ctx.db, userHabits),
+            ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
 
             const days = allDates.map((date) => {
                 const key = toDateKey(date);
                 const scheduledCount = userHabits.filter((h) =>
-                    isHabitScheduledOn(h, date),
+                    isHabitScheduledOn(h, date, effectiveStartMap.get(h.id)),
                 ).length;
                 const completedCount = rangeCompletions.filter(
                     (c) => toDateKey(c.date) === key,
@@ -62,8 +101,11 @@ export const analyticsRouter = createTRPCRouter({
                     scheduled: scheduledCount,
                     rate:
                         scheduledCount > 0
-                            ? Math.round(
-                                  (completedCount / scheduledCount) * 100,
+                            ? Math.min(
+                                  100,
+                                  Math.round(
+                                      (completedCount / scheduledCount) * 100,
+                                  ),
                               )
                             : 0,
                 };
@@ -80,31 +122,35 @@ export const analyticsRouter = createTRPCRouter({
                 .from(habits)
                 .where(eq(habits.userId, ctx.user.id));
 
-            const rangeCompletions = await ctx.db
-                .select({
-                    id: completions.id,
-                    date: completions.date,
-                    habitId: completions.habitId,
-                })
-                .from(completions)
-                .innerJoin(habits, eq(habits.id, completions.habitId))
-                .where(
-                    and(
-                        eq(habits.userId, ctx.user.id),
-                        gte(completions.date, input.startDate),
-                        lte(completions.date, input.endDate),
-                    ),
-                )
-                .orderBy(asc(completions.date));
+            const [rangeCompletions, effectiveStartMap] = await Promise.all([
+                ctx.db
+                    .select({
+                        id: completions.id,
+                        date: completions.date,
+                        habitId: completions.habitId,
+                    })
+                    .from(completions)
+                    .innerJoin(habits, eq(habits.id, completions.habitId))
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            gte(completions.date, input.startDate),
+                            lte(completions.date, input.endDate),
+                        ),
+                    )
+                    .orderBy(asc(completions.date)),
+                loadEffectiveStartMap(ctx.db, userHabits),
+            ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
 
             return userHabits.map((habit) => {
+                const effectiveStart = effectiveStartMap.get(habit.id);
                 const habitDone = rangeCompletions.filter(
                     (c) => c.habitId === habit.id,
                 );
                 const scheduledDates = allDates.filter((d) =>
-                    isHabitScheduledOn(habit, d),
+                    isHabitScheduledOn(habit, d, effectiveStart),
                 );
 
                 const completedSet = new Set(
@@ -118,8 +164,12 @@ export const analyticsRouter = createTRPCRouter({
 
                 const rate =
                     scheduledDates.length > 0
-                        ? Math.round(
-                              (habitDone.length / scheduledDates.length) * 100,
+                        ? Math.min(
+                              100,
+                              Math.round(
+                                  (habitDone.length / scheduledDates.length) *
+                                      100,
+                              ),
                           )
                         : 0;
 
@@ -146,22 +196,25 @@ export const analyticsRouter = createTRPCRouter({
                 .from(habits)
                 .where(eq(habits.userId, ctx.user.id));
 
-            const rangeCompletions = await ctx.db
-                .select({
-                    id: completions.id,
-                    date: completions.date,
-                    habitId: completions.habitId,
-                })
-                .from(completions)
-                .innerJoin(habits, eq(habits.id, completions.habitId))
-                .where(
-                    and(
-                        eq(habits.userId, ctx.user.id),
-                        gte(completions.date, input.startDate),
-                        lte(completions.date, input.endDate),
-                    ),
-                )
-                .orderBy(asc(completions.date));
+            const [rangeCompletions, effectiveStartMap] = await Promise.all([
+                ctx.db
+                    .select({
+                        id: completions.id,
+                        date: completions.date,
+                        habitId: completions.habitId,
+                    })
+                    .from(completions)
+                    .innerJoin(habits, eq(habits.id, completions.habitId))
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            gte(completions.date, input.startDate),
+                            lte(completions.date, input.endDate),
+                        ),
+                    )
+                    .orderBy(asc(completions.date)),
+                loadEffectiveStartMap(ctx.db, userHabits),
+            ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
 
@@ -182,8 +235,9 @@ export const analyticsRouter = createTRPCRouter({
                 const entry = categoryMap.get(cat)!;
                 entry.habitCount += 1;
 
+                const effectiveStart = effectiveStartMap.get(habit.id);
                 const scheduledDates = allDates.filter((d) =>
-                    isHabitScheduledOn(habit, d),
+                    isHabitScheduledOn(habit, d, effectiveStart),
                 );
                 entry.scheduled += scheduledDates.length;
 
@@ -199,8 +253,11 @@ export const analyticsRouter = createTRPCRouter({
                     ...data,
                     rate:
                         data.scheduled > 0
-                            ? Math.round(
-                                  (data.completed / data.scheduled) * 100,
+                            ? Math.min(
+                                  100,
+                                  Math.round(
+                                      (data.completed / data.scheduled) * 100,
+                                  ),
                               )
                             : 0,
                 }),
@@ -215,22 +272,25 @@ export const analyticsRouter = createTRPCRouter({
                 .from(habits)
                 .where(eq(habits.userId, ctx.user.id));
 
-            const rangeCompletions = await ctx.db
-                .select({
-                    id: completions.id,
-                    date: completions.date,
-                    habitId: completions.habitId,
-                })
-                .from(completions)
-                .innerJoin(habits, eq(habits.id, completions.habitId))
-                .where(
-                    and(
-                        eq(habits.userId, ctx.user.id),
-                        gte(completions.date, input.startDate),
-                        lte(completions.date, input.endDate),
-                    ),
-                )
-                .orderBy(asc(completions.date));
+            const [rangeCompletions, effectiveStartMap] = await Promise.all([
+                ctx.db
+                    .select({
+                        id: completions.id,
+                        date: completions.date,
+                        habitId: completions.habitId,
+                    })
+                    .from(completions)
+                    .innerJoin(habits, eq(habits.id, completions.habitId))
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            gte(completions.date, input.startDate),
+                            lte(completions.date, input.endDate),
+                        ),
+                    )
+                    .orderBy(asc(completions.date)),
+                loadEffectiveStartMap(ctx.db, userHabits),
+            ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
 
@@ -247,7 +307,8 @@ export const analyticsRouter = createTRPCRouter({
                 for (const date of datesOnThisDay) {
                     const key = toDateKey(date);
                     for (const habit of userHabits) {
-                        if (isHabitScheduledOn(habit, date)) {
+                        const effectiveStart = effectiveStartMap.get(habit.id);
+                        if (isHabitScheduledOn(habit, date, effectiveStart)) {
                             totalScheduled++;
                             const done = rangeCompletions.some(
                                 (c) =>
@@ -266,8 +327,11 @@ export const analyticsRouter = createTRPCRouter({
                     scheduled: totalScheduled,
                     rate:
                         totalScheduled > 0
-                            ? Math.round(
-                                  (totalCompleted / totalScheduled) * 100,
+                            ? Math.min(
+                                  100,
+                                  Math.round(
+                                      (totalCompleted / totalScheduled) * 100,
+                                  ),
                               )
                             : 0,
                 };
@@ -284,22 +348,25 @@ export const analyticsRouter = createTRPCRouter({
                 .from(habits)
                 .where(eq(habits.userId, ctx.user.id));
 
-            const rangeCompletions = await ctx.db
-                .select({
-                    id: completions.id,
-                    date: completions.date,
-                    habitId: completions.habitId,
-                })
-                .from(completions)
-                .innerJoin(habits, eq(habits.id, completions.habitId))
-                .where(
-                    and(
-                        eq(habits.userId, ctx.user.id),
-                        gte(completions.date, input.startDate),
-                        lte(completions.date, input.endDate),
-                    ),
-                )
-                .orderBy(asc(completions.date));
+            const [rangeCompletions, effectiveStartMap] = await Promise.all([
+                ctx.db
+                    .select({
+                        id: completions.id,
+                        date: completions.date,
+                        habitId: completions.habitId,
+                    })
+                    .from(completions)
+                    .innerJoin(habits, eq(habits.id, completions.habitId))
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            gte(completions.date, input.startDate),
+                            lte(completions.date, input.endDate),
+                        ),
+                    )
+                    .orderBy(asc(completions.date)),
+                loadEffectiveStartMap(ctx.db, userHabits),
+            ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
 
@@ -307,8 +374,9 @@ export const analyticsRouter = createTRPCRouter({
             let bestStreakAcrossHabits = 0;
 
             for (const habit of userHabits) {
+                const effectiveStart = effectiveStartMap.get(habit.id);
                 const scheduledDates = allDates.filter((d) =>
-                    isHabitScheduledOn(habit, d),
+                    isHabitScheduledOn(habit, d, effectiveStart),
                 );
                 totalScheduled += scheduledDates.length;
 
@@ -329,13 +397,16 @@ export const analyticsRouter = createTRPCRouter({
             const totalCompletions = rangeCompletions.length;
             const overallRate =
                 totalScheduled > 0
-                    ? Math.round((totalCompletions / totalScheduled) * 100)
+                    ? Math.min(
+                          100,
+                          Math.round((totalCompletions / totalScheduled) * 100),
+                      )
                     : 0;
 
             const perfectDays = allDates.filter((date) => {
                 const key = toDateKey(date);
                 const scheduled = userHabits.filter((h) =>
-                    isHabitScheduledOn(h, date),
+                    isHabitScheduledOn(h, date, effectiveStartMap.get(h.id)),
                 );
                 if (scheduled.length === 0) return false;
                 return scheduled.every((h) =>

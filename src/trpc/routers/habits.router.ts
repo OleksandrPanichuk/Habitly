@@ -51,7 +51,15 @@ export const habitsRouter = createTRPCRouter({
                 )
                 .orderBy(asc(habits.createdAt));
 
-            const dayOfWeek = input.date.getDay();
+            const dayOfWeek = input.date.getUTCDay();
+
+            const inputDateUtc = new Date(
+                Date.UTC(
+                    input.date.getUTCFullYear(),
+                    input.date.getUTCMonth(),
+                    input.date.getUTCDate(),
+                ),
+            );
 
             return rows.filter((row) => {
                 switch (row.frequencyType) {
@@ -63,10 +71,14 @@ export const habitsRouter = createTRPCRouter({
                         if (!row.frequencyInterval || !row.frequencyUnit)
                             return false;
 
-                        const start = new Date(row.createdAt);
-                        start.setHours(0, 0, 0, 0);
-                        const target = new Date(input.date);
-                        target.setHours(0, 0, 0, 0);
+                        const start = new Date(
+                            Date.UTC(
+                                row.createdAt.getUTCFullYear(),
+                                row.createdAt.getUTCMonth(),
+                                row.createdAt.getUTCDate(),
+                            ),
+                        );
+                        const target = inputDateUtc;
 
                         const daysDiff = Math.round(
                             (target.getTime() - start.getTime()) /

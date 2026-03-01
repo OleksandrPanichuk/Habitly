@@ -39,11 +39,20 @@ const TABS: { key: TabState; label: string }[] = [
     { key: "INCOMPLETE", label: "Incomplete" },
 ];
 
-export const HabitsView = ({ date: initialDate }: { date: string }) => {
+export const HabitsView = ({
+    date: initialDate, // eslint-disable-line @typescript-eslint/no-unused-vars
+}: {
+    date: string;
+}) => {
     const trpc = useTRPC();
     const queryClient = useQueryClient();
 
-    const [date, setDate] = useState<Date>(() => new Date(initialDate));
+    const [date, setDate] = useState<Date>(() => {
+        const now = new Date();
+        return new Date(
+            Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()),
+        );
+    });
     const [tab, setTab] = useState<TabState>("ALL");
     const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
@@ -115,10 +124,20 @@ export const HabitsView = ({ date: initialDate }: { date: string }) => {
     );
 
     useEffect(() => {
-        const prev = new Date(date);
-        prev.setUTCDate(prev.getUTCDate() - 1);
-        const next = new Date(date);
-        next.setUTCDate(next.getUTCDate() + 1);
+        const prev = new Date(
+            Date.UTC(
+                date.getUTCFullYear(),
+                date.getUTCMonth(),
+                date.getUTCDate() - 1,
+            ),
+        );
+        const next = new Date(
+            Date.UTC(
+                date.getUTCFullYear(),
+                date.getUTCMonth(),
+                date.getUTCDate() + 1,
+            ),
+        );
         prefetchDate(prev);
         prefetchDate(next);
     }, [date, prefetchDate]);
@@ -441,23 +460,6 @@ export const HabitsView = ({ date: initialDate }: { date: string }) => {
                                     aria-label="Toggle archived habits"
                                 >
                                     <ArchiveIcon size={14} />
-                                </Button>
-                            </Tooltip>
-
-                            <Tooltip
-                                content="Browse templates"
-                                placement="bottom"
-                                delay={400}
-                            >
-                                <Button
-                                    isIconOnly
-                                    size="sm"
-                                    variant="flat"
-                                    onPress={() => setTemplatesOpen(true)}
-                                    className="h-8 w-8 text-foreground-400 hover:text-foreground"
-                                    aria-label="Habit templates"
-                                >
-                                    <LayoutTemplateIcon size={14} />
                                 </Button>
                             </Tooltip>
 

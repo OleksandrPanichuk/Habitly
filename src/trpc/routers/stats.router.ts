@@ -1,14 +1,49 @@
 import { TRPCError } from "@trpc/server";
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, min } from "drizzle-orm";
+import type { THabit } from "@/db/schema";
 import { completions, habits } from "@/db/schema";
 import {
     calculateStreaks,
     getDatesInRange,
+    getEffectiveStart,
     isHabitScheduledOn,
     toDateKey,
 } from "@/lib/utils";
 import { getHabitStatsSchema, getStatsSchema } from "@/schemas";
 import { createTRPCRouter, protectedProcedure } from "@/trpc/init";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadEffectiveStartMap(
+    db: any,
+    userHabits: THabit[],
+): Promise<Map<string, Date>> {
+    const map = new Map<string, Date>();
+    if (userHabits.length === 0) return map;
+
+    const rows = await db
+        .select({
+            habitId: completions.habitId,
+            firstDate: min(completions.date),
+        })
+        .from(completions)
+        .where(
+            inArray(
+                completions.habitId,
+                userHabits.map((h) => h.id),
+            ),
+        )
+        .groupBy(completions.habitId);
+
+    for (const habit of userHabits) {
+        const row = rows.find(
+            (r: { habitId: string }) => r.habitId === habit.id,
+        );
+        const firstDate = row?.firstDate ?? undefined;
+        map.set(habit.id, getEffectiveStart(habit, firstDate));
+    }
+
+    return map;
+}
 
 export const statsRouter = createTRPCRouter({
     getSummary: protectedProcedure
@@ -19,33 +54,38 @@ export const statsRouter = createTRPCRouter({
                 .from(habits)
                 .where(eq(habits.userId, ctx.user.id));
 
-            const rangeCompletions = await ctx.db
-                .select({
-                    id: completions.id,
-                    date: completions.date,
-                    habitId: completions.habitId,
-                })
-                .from(completions)
-                .innerJoin(habits, eq(habits.id, completions.habitId))
-                .where(
-                    and(
-                        eq(habits.userId, ctx.user.id),
-                        gte(completions.date, input.startDate),
-                        lte(completions.date, input.endDate),
+            const [rangeCompletions, effectiveStartMap] = await Promise.all([
+                ctx.db
+                    .select({
+                        id: completions.id,
+                        date: completions.date,
+                        habitId: completions.habitId,
+                    })
+                    .from(completions)
+                    .innerJoin(habits, eq(habits.id, completions.habitId))
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            gte(completions.date, input.startDate),
+                            lte(completions.date, input.endDate),
+                        ),
                     ),
-                );
+                loadEffectiveStartMap(ctx.db, userHabits),
+            ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
 
             const completedDaySet = new Set(
-                rangeCompletions.map((c) => toDateKey(c.date)),
+                rangeCompletions.map((c: { date: Date }) => toDateKey(c.date)),
             );
 
             let totalScheduled = 0;
 
             for (const habit of userHabits) {
+                const effectiveStart = effectiveStartMap.get(habit.id);
                 for (const date of allDates) {
-                    if (isHabitScheduledOn(habit, date)) totalScheduled++;
+                    if (isHabitScheduledOn(habit, date, effectiveStart))
+                        totalScheduled++;
                 }
             }
 
@@ -53,7 +93,10 @@ export const statsRouter = createTRPCRouter({
 
             const completionRate =
                 totalScheduled > 0
-                    ? Math.round((totalCompletions / totalScheduled) * 100)
+                    ? Math.min(
+                          100,
+                          Math.round((totalCompletions / totalScheduled) * 100),
+                      )
                     : 0;
 
             const { currentStreak, longestStreak } = calculateStreaks(
@@ -66,7 +109,7 @@ export const statsRouter = createTRPCRouter({
                 return {
                     date,
                     count: rangeCompletions.filter(
-                        (c) => toDateKey(c.date) === key,
+                        (c: { date: Date }) => toDateKey(c.date) === key,
                     ).length,
                 };
             });
@@ -116,52 +159,42 @@ export const statsRouter = createTRPCRouter({
                     ),
                 );
 
+            // Load the all-time earliest completion for this single habit
+            const [earliestRow] = await ctx.db
+                .select({
+                    firstDate: min(completions.date),
+                })
+                .from(completions)
+                .where(eq(completions.habitId, input.habitId));
+
+            const effectiveStart = getEffectiveStart(
+                habit,
+                earliestRow?.firstDate ?? undefined,
+            );
+
             const completedDatesSet = new Set(
-                habitCompletions.map((c) => toDateKey(c.date)),
+                habitCompletions.map((c: { date: Date }) => toDateKey(c.date)),
             );
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
             const scheduledDates = allDates.filter((date) =>
-                isHabitScheduledOn(habit, date),
-            );
-
-            const habitCreatedKey = toDateKey(
-                new Date(
-                    Date.UTC(
-                        habit.createdAt.getUTCFullYear(),
-                        habit.createdAt.getUTCMonth(),
-                        habit.createdAt.getUTCDate(),
-                    ),
-                ),
-            );
-
-            const firstCompletionKey =
-                habitCompletions.length > 0
-                    ? (habitCompletions
-                          .map((c) => toDateKey(c.date))
-                          .sort()[0] ?? null)
-                    : null;
-
-            const effectiveStartKey =
-                firstCompletionKey && firstCompletionKey < habitCreatedKey
-                    ? firstCompletionKey
-                    : habitCreatedKey;
-
-            const effectiveScheduledDates = scheduledDates.filter(
-                (d) => toDateKey(d) >= effectiveStartKey,
+                isHabitScheduledOn(habit, date, effectiveStart),
             );
 
             const completionRate =
-                effectiveScheduledDates.length > 0
-                    ? Math.round(
-                          (habitCompletions.length /
-                              effectiveScheduledDates.length) *
-                              100,
+                scheduledDates.length > 0
+                    ? Math.min(
+                          100,
+                          Math.round(
+                              (habitCompletions.length /
+                                  scheduledDates.length) *
+                                  100,
+                          ),
                       )
                     : 0;
 
             const { currentStreak, longestStreak } = calculateStreaks(
-                effectiveScheduledDates,
+                scheduledDates,
                 completedDatesSet,
             );
 
@@ -177,7 +210,7 @@ export const statsRouter = createTRPCRouter({
             return {
                 habit,
                 totalCompletions: habitCompletions.length,
-                totalScheduled: effectiveScheduledDates.length,
+                totalScheduled: scheduledDates.length,
                 completionRate,
                 currentStreak,
                 longestStreak,

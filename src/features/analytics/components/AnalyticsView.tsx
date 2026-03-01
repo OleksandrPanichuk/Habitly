@@ -2,10 +2,10 @@
 
 import { Button } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
-import { format, subDays, subMonths } from "date-fns";
 import { motion } from "framer-motion";
 import { BarChart2Icon, ChevronLeftIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toDateKey } from "@/lib/utils";
 import { useTRPC } from "@/trpc/client";
 import { CategoryBreakdownChart } from "./CategoryBreakdownChart";
 import { CompletionRateChart } from "./CompletionRateChart";
@@ -24,28 +24,58 @@ const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
     { key: "1y", label: "1 year" },
 ];
 
-function getRangeDates(range: RangeKey): { startDate: Date; endDate: Date } {
+function utcToday(): Date {
     const now = new Date();
-    const endDate = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
+function addUtcMonths(date: Date, months: number): Date {
+    return new Date(
+        Date.UTC(
+            date.getUTCFullYear(),
+            date.getUTCMonth() - months,
+            date.getUTCDate(),
+        ),
     );
+}
+
+function getRangeDates(range: RangeKey): { startDate: Date; endDate: Date } {
+    const endDate = utcToday();
 
     let startDate: Date;
     switch (range) {
         case "7d":
-            startDate = subDays(endDate, 6);
+            startDate = new Date(
+                Date.UTC(
+                    endDate.getUTCFullYear(),
+                    endDate.getUTCMonth(),
+                    endDate.getUTCDate() - 6,
+                ),
+            );
             break;
         case "30d":
-            startDate = subDays(endDate, 29);
+            startDate = new Date(
+                Date.UTC(
+                    endDate.getUTCFullYear(),
+                    endDate.getUTCMonth(),
+                    endDate.getUTCDate() - 29,
+                ),
+            );
             break;
         case "90d":
-            startDate = subDays(endDate, 89);
+            startDate = new Date(
+                Date.UTC(
+                    endDate.getUTCFullYear(),
+                    endDate.getUTCMonth(),
+                    endDate.getUTCDate() - 89,
+                ),
+            );
             break;
         case "6m":
-            startDate = subMonths(endDate, 6);
+            startDate = addUtcMonths(endDate, 6);
             break;
         case "1y":
-            startDate = subMonths(endDate, 12);
+            startDate = addUtcMonths(endDate, 12);
             break;
     }
 
@@ -175,8 +205,7 @@ export const AnalyticsView = () => {
                                 Analytics
                             </h1>
                             <p className="text-xs text-foreground-400">
-                                {format(startDate, "MMM d, yyyy")} —{" "}
-                                {format(endDate, "MMM d, yyyy")}
+                                {toDateKey(startDate)} — {toDateKey(endDate)}
                             </p>
                         </div>
                     </div>

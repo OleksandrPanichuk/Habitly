@@ -86,9 +86,7 @@ export const HabitItem = ({
                             h.id === data.id
                                 ? {
                                       ...h,
-                                      completedAt: isCompleted
-                                          ? null
-                                          : new Date(),
+                                      completedAt: isCompleted ? null : date,
                                       completionNote: isCompleted
                                           ? null
                                           : h.completionNote,

@@ -12,6 +12,7 @@ import {
     XAxis,
     YAxis,
 } from "recharts";
+import { parseDateKey } from "@/lib/utils";
 
 interface DayData {
     date: string;
@@ -87,7 +88,7 @@ function aggregateByWeek(data: DayData[]): WeeklyData[] {
     >();
 
     for (const day of data) {
-        const date = new Date(day.date);
+        const date = parseDateKey(day.date);
         const ws = startOfWeek(date, { weekStartsOn: 1 });
         const key = format(ws, "yyyy-MM-dd");
 
@@ -108,7 +109,10 @@ function aggregateByWeek(data: DayData[]): WeeklyData[] {
             scheduled: entry.scheduled,
             rate:
                 entry.scheduled > 0
-                    ? Math.round((entry.completed / entry.scheduled) * 100)
+                    ? Math.min(
+                          100,
+                          Math.round((entry.completed / entry.scheduled) * 100),
+                      )
                     : 0,
         }));
 }
@@ -165,6 +169,7 @@ export const CompletionRateChart = ({ data }: ICompletionRateChartProps) => {
                     />
                     <YAxis
                         domain={[0, 100]}
+                        allowDataOverflow={false}
                         tick={{ fill: "rgba(255,255,255,0.35)", fontSize: 10 }}
                         axisLine={false}
                         tickLine={false}
