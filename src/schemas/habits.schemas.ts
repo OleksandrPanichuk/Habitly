@@ -12,6 +12,9 @@ export const HABIT_CATEGORIES = [
     "other",
 ] as const;
 
+export const HABIT_GOAL_TYPES = ["binary", "count", "duration"] as const;
+export const HABIT_TARGET_UNITS = ["times", "minutes"] as const;
+
 export type THabitCategory = (typeof HABIT_CATEGORIES)[number];
 
 export const listHabitsSchema = z.object({
@@ -33,6 +36,10 @@ export const habitValuesSchema = z
             .default("#3b82f6"),
         icon: z.string().max(10).optional(),
         category: z.enum(HABIT_CATEGORIES).optional().default("other"),
+        goalType: z.enum(HABIT_GOAL_TYPES).optional().default("binary"),
+        targetValue: z.number().int().positive().optional(),
+        targetUnit: z.enum(HABIT_TARGET_UNITS).optional(),
+        reminderEnabled: z.boolean().optional().default(false),
         frequencyType: z.enum(["daily", "weekly", "custom"]),
         frequencyDaysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
         frequencyInterval: z
@@ -73,6 +80,40 @@ export const habitValuesSchema = z
                     code: z.ZodIssueCode.custom,
                     message: "Unit is required",
                     path: ["frequencyUnit"],
+                });
+            }
+        }
+
+        if (data.goalType !== "binary") {
+            if (!data.targetValue) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Target value is required",
+                    path: ["targetValue"],
+                });
+            }
+
+            if (!data.targetUnit) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Target unit is required",
+                    path: ["targetUnit"],
+                });
+            }
+
+            if (data.goalType === "duration" && data.targetUnit !== "minutes") {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Duration goals must use minutes",
+                    path: ["targetUnit"],
+                });
+            }
+
+            if (data.goalType === "count" && data.targetUnit !== "times") {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Count goals must use times",
+                    path: ["targetUnit"],
                 });
             }
         }

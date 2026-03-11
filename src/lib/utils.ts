@@ -1,6 +1,5 @@
 import type { THabit } from "@/db/schema";
 
-
 export function parseDateKey(dateKey: string): Date {
     const [year, month, day] = dateKey.split("-").map(Number);
     return new Date(year, month - 1, day);
@@ -57,8 +56,24 @@ export function getEffectiveStart(
     return firstCompletionUtc < createdUtc ? firstCompletionUtc : createdUtc;
 }
 
-export function isHabitScheduledOn(
-    habit: THabit,
+export function getHabitDeletionDate(
+    habit: Pick<THabit, "deletedAt">,
+): Date | null {
+    if (!habit.deletedAt) {
+        return null;
+    }
+
+    return new Date(
+        Date.UTC(
+            habit.deletedAt.getUTCFullYear(),
+            habit.deletedAt.getUTCMonth(),
+            habit.deletedAt.getUTCDate(),
+        ),
+    );
+}
+
+export function isHabitVisibleOnDate(
+    habit: Pick<THabit, "createdAt" | "deletedAt">,
     date: Date,
     effectiveStart?: Date,
 ): boolean {
@@ -76,7 +91,24 @@ export function isHabitScheduledOn(
         Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
     );
 
-    if (dateNorm < floorDate) return false;
+    if (dateNorm < floorDate) {
+        return false;
+    }
+
+    const deletedDate = getHabitDeletionDate(habit);
+    if (deletedDate && dateNorm >= deletedDate) {
+        return false;
+    }
+
+    return true;
+}
+
+export function isHabitScheduledOn(
+    habit: THabit,
+    date: Date,
+    effectiveStart?: Date,
+): boolean {
+    if (!isHabitVisibleOnDate(habit, date, effectiveStart)) return false;
 
     const dayOfWeek = date.getUTCDay();
 
@@ -166,4 +198,60 @@ export function calculateStreaks(
     }
 
     return { currentStreak, longestStreak };
+}
+
+export function getHabitCompletionValue(
+    habit: Pick<THabit, "goalType">,
+    completionValue: number | null | undefined,
+): number {
+    if (habit.goalType === "binary") {
+        return completionValue && completionValue > 0 ? 1 : 0;
+    }
+
+    return completionValue ?? 0;
+}
+
+export function isHabitCompleteForValue(
+    habit: Pick<THabit, "goalType" | "targetValue">,
+    completionValue: number | null | undefined,
+    completionDate?: Date | null,
+): boolean {
+    if (!completionDate) {
+        return false;
+    }
+
+    if (habit.goalType === "binary") {
+        return true;
+    }
+
+    return (completionValue ?? 0) >= (habit.targetValue ?? 1);
+}
+
+export function getHabitProgressPercent(
+    habit: Pick<THabit, "goalType" | "targetValue">,
+    completionValue: number | null | undefined,
+): number {
+    if (habit.goalType === "binary") {
+        return completionValue && completionValue > 0 ? 100 : 0;
+    }
+
+    const targetValue = habit.targetValue ?? 1;
+    return Math.max(
+        0,
+        Math.min(100, Math.round(((completionValue ?? 0) / targetValue) * 100)),
+    );
+}
+
+export function getHabitTargetLabel(
+    habit: Pick<THabit, "goalType" | "targetValue" | "targetUnit">,
+): string | null {
+    if (habit.goalType === "binary") {
+        return null;
+    }
+
+    if (!habit.targetValue || !habit.targetUnit) {
+        return null;
+    }
+
+    return `${habit.targetValue} ${habit.targetUnit}`;
 }

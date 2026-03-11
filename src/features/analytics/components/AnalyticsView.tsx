@@ -1,12 +1,25 @@
 "use client";
 
+import { authClient } from "@/lib/auth-client";
+import {
+    canAccessAnalyticsRange,
+    getEntitlementsForTier,
+    normalizeSubscriptionTier,
+} from "@/lib/entitlements";
+import { toDateKey } from "@/lib/utils";
+import { useTRPC } from "@/trpc/client";
 import { Button } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { BarChart2Icon, ChevronLeftIcon } from "lucide-react";
-import { useMemo, useState } from "react";
-import { toDateKey } from "@/lib/utils";
-import { useTRPC } from "@/trpc/client";
+import {
+    AlertTriangleIcon,
+    BarChart2Icon,
+    ChevronLeftIcon,
+    TrendingDownIcon,
+    TrophyIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { CategoryBreakdownChart } from "./CategoryBreakdownChart";
 import { CompletionRateChart } from "./CompletionRateChart";
 import { DailyCompletionChart } from "./DailyCompletionChart";
@@ -23,6 +36,14 @@ const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
     { key: "6m", label: "6 months" },
     { key: "1y", label: "1 year" },
 ];
+
+const RANGE_LENGTH_DAYS: Record<RangeKey, number> = {
+    "7d": 7,
+    "30d": 30,
+    "90d": 90,
+    "6m": 183,
+    "1y": 365,
+};
 
 function utcToday(): Date {
     const now = new Date();
@@ -117,6 +138,9 @@ const AnalyticsContent = ({ startDate, endDate }: IAnalyticsContentProps) => {
     const { data: dowData, isLoading: dowLoading } = useQuery(
         trpc.analytics.getDayOfWeekBreakdown.queryOptions(input),
     );
+    const { data: insights, isLoading: insightsLoading } = useQuery(
+        trpc.analytics.getInsights.queryOptions(input),
+    );
 
     return (
         <div className="space-y-8">
@@ -136,6 +160,75 @@ const AnalyticsContent = ({ startDate, endDate }: IAnalyticsContentProps) => {
                     totalScheduled={overview.totalScheduled}
                 />
             )}
+
+            <div className="grid gap-4 lg:grid-cols-3">
+                {insightsLoading || !insights ? (
+                    Array.from({ length: 3 }).map((_, index) => (
+                        <SkeletonCard key={index} />
+                    ))
+                ) : (
+                    <>
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-foreground-400">
+                                <AlertTriangleIcon size={13} /> Weakest day
+                            </div>
+                            <p className="mt-2 text-lg font-semibold text-foreground">
+                                {insights.weakestDay
+                                    ? `${insights.weakestDay.day} at ${insights.weakestDay.rate}%`
+                                    : "Not enough scheduled data yet"}
+                            </p>
+                            <p className="mt-1 text-xs text-foreground-400">
+                                {insights.weakestDay
+                                    ? `You complete ${insights.weakestDay.completed} of ${insights.weakestDay.scheduled} scheduled habit slots on this day.`
+                                    : "Keep tracking for another week to expose a weak day pattern."}
+                            </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-foreground-400">
+                                <TrophyIcon size={13} /> Strongest category
+                            </div>
+                            <p className="mt-2 text-lg font-semibold capitalize text-foreground">
+                                {insights.strongestCategory
+                                    ? `${insights.strongestCategory.category} at ${insights.strongestCategory.rate}%`
+                                    : "No category signal yet"}
+                            </p>
+                            <p className="mt-1 text-xs text-foreground-400">
+                                {insights.strongestCategory
+                                    ? `This category is carrying your consistency right now.`
+                                    : "Once multiple habits are active, your strongest category will show here."}
+                            </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-foreground-400">
+                                <TrendingDownIcon size={13} /> At risk
+                            </div>
+                            <div className="mt-2 space-y-1">
+                                {insights.decliningHabits.length > 0 ? (
+                                    insights.decliningHabits.map((habit) => (
+                                        <p
+                                            key={habit.habitId}
+                                            className="text-sm text-foreground"
+                                        >
+                                            {habit.icon ? `${habit.icon} ` : ""}
+                                            {habit.name}
+                                            <span className="ml-1 text-xs text-foreground-400">
+                                                {habit.firstHalfRate}% →{" "}
+                                                {habit.secondHalfRate}%
+                                            </span>
+                                        </p>
+                                    ))
+                                ) : (
+                                    <p className="text-sm text-foreground">
+                                        No declining habits in this range.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-5">
@@ -183,7 +276,30 @@ const AnalyticsContent = ({ startDate, endDate }: IAnalyticsContentProps) => {
 };
 
 export const AnalyticsView = () => {
+    const trpc = useTRPC();
+    const { data: session } = authClient.useSession();
     const [range, setRange] = useState<RangeKey>("30d");
+
+    const { data: billingStatus } = useQuery({
+        ...trpc.billing.getStatus.queryOptions(),
+        enabled: Boolean(session?.user),
+        retry: false,
+    });
+
+    const subscriptionTier = normalizeSubscriptionTier(
+        billingStatus?.subscriptionTier ??
+            (session?.user as { subscriptionTier?: string | null } | undefined)
+                ?.subscriptionTier,
+    );
+    const entitlements = getEntitlementsForTier(subscriptionTier);
+
+    useEffect(() => {
+        if (
+            !canAccessAnalyticsRange(subscriptionTier, RANGE_LENGTH_DAYS[range])
+        ) {
+            setRange("7d");
+        }
+    }, [range, subscriptionTier]);
 
     const { startDate, endDate } = useMemo(() => getRangeDates(range), [range]);
 
@@ -223,25 +339,54 @@ export const AnalyticsView = () => {
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.2, delay: 0.05 }}
-                    className="flex gap-1.5 p-1 rounded-xl bg-white/5 border border-white/10 w-fit"
+                    className="flex flex-col gap-2"
                 >
-                    {RANGE_OPTIONS.map(({ key, label }) => (
-                        <Button
-                            key={key}
-                            size="sm"
-                            variant={range === key ? "solid" : "light"}
-                            color={range === key ? "primary" : "default"}
-                            onPress={() => setRange(key)}
-                            className={[
-                                "text-xs font-medium h-7 px-3 min-w-fit rounded-lg transition-all",
-                                range === key
-                                    ? "shadow-sm"
-                                    : "text-foreground-500 hover:text-foreground",
-                            ].join(" ")}
-                        >
-                            {label}
-                        </Button>
-                    ))}
+                    <div className="flex gap-1.5 p-1 rounded-xl bg-white/5 border border-white/10 w-fit">
+                        {RANGE_OPTIONS.map(({ key, label }) => {
+                            const isLocked = !canAccessAnalyticsRange(
+                                subscriptionTier,
+                                RANGE_LENGTH_DAYS[key],
+                            );
+
+                            return (
+                                <Button
+                                    key={key}
+                                    size="sm"
+                                    variant={range === key ? "solid" : "light"}
+                                    color={
+                                        range === key ? "primary" : "default"
+                                    }
+                                    onPress={() => {
+                                        if (isLocked) {
+                                            toast.info(
+                                                "Upgrade to Pro to unlock longer analytics ranges.",
+                                            );
+                                            return;
+                                        }
+
+                                        setRange(key);
+                                    }}
+                                    className={[
+                                        "text-xs font-medium h-7 px-3 min-w-fit rounded-lg transition-all",
+                                        range === key
+                                            ? "shadow-sm"
+                                            : "text-foreground-500 hover:text-foreground",
+                                        isLocked ? "opacity-60" : "",
+                                    ].join(" ")}
+                                >
+                                    {label}
+                                    {isLocked ? " • Pro" : ""}
+                                </Button>
+                            );
+                        })}
+                    </div>
+
+                    {entitlements.maxAnalyticsRangeDays !== null ? (
+                        <p className="text-xs text-foreground-500 px-1">
+                            Free plan includes analytics for the last{" "}
+                            {entitlements.maxAnalyticsRangeDays} days.
+                        </p>
+                    ) : null}
                 </motion.div>
 
                 <AnalyticsContent startDate={startDate} endDate={endDate} />

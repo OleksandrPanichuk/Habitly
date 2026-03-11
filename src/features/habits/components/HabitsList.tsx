@@ -1,5 +1,6 @@
 "use client";
 
+import type { THabitWithStatus } from "@/types";
 import { Button } from "@heroui/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -8,7 +9,6 @@ import {
     PlusIcon,
     SparklesIcon,
 } from "lucide-react";
-import type { THabitWithStatus } from "@/types";
 import { ArchivedHabitItem } from "./ArchivedHabitItem";
 import { HabitItem } from "./HabitItem";
 
@@ -72,27 +72,30 @@ const EmptyArchived = ({ onHideArchived }: { onHideArchived: () => void }) => (
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="flex flex-col items-center justify-center gap-5 py-16 px-6 text-center"
+        className="rounded-3xl border border-white/10 bg-white/5 px-6 py-10 text-center"
     >
-        <div className="w-20 h-20 rounded-2xl bg-warning/10 border border-warning/20 flex items-center justify-center">
-            <ArchiveIcon size={36} className="text-warning" />
+        <div className="mx-auto flex max-w-sm flex-col items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-warning/20 bg-warning/10">
+                <ArchiveIcon size={28} className="text-warning" />
+            </div>
+            <div className="space-y-1.5">
+                <h3 className="text-lg font-bold text-foreground">
+                    Nothing archived right now
+                </h3>
+                <p className="text-sm leading-relaxed text-foreground-500">
+                    Archive is for habits you want out of the way but not gone.
+                    When you archive one, it will show up here for quick
+                    restore.
+                </p>
+            </div>
+            <Button
+                variant="flat"
+                onPress={onHideArchived}
+                className="font-semibold"
+            >
+                Return to active habits
+            </Button>
         </div>
-        <div className="space-y-1.5 max-w-xs">
-            <h3 className="text-lg font-bold text-foreground">
-                No archived habits
-            </h3>
-            <p className="text-sm text-foreground-500 leading-relaxed">
-                You haven't archived any habits yet. Archive a habit to remove
-                it from your daily view without deleting it.
-            </p>
-        </div>
-        <Button
-            variant="flat"
-            onPress={onHideArchived}
-            className="font-semibold"
-        >
-            Back to my habits
-        </Button>
     </motion.div>
 );
 

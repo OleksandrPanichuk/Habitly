@@ -56,6 +56,13 @@ DATABASE_URL="postgresql://postgres:postgres@db:5432/habitly"
 # Better Auth
 BETTER_AUTH_SECRET="your-secret-key-here-generate-a-random-string"
 BETTER_AUTH_URL="http://localhost:3000"
+
+# Stripe Billing
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
+STRIPE_SECRET_KEY="sk_test_..."
+STRIPE_WEBHOOK_SECRET="whsec_..."
+STRIPE_PRO_PRICE_ID="price_..."
+STRIPE_LIFETIME_PRICE_ID="price_..."
 ```
 
 Create a `.env.db` file for the database:
@@ -70,6 +77,16 @@ POSTGRES_DB=habitly
 ```bash
 openssl rand -base64 32
 ```
+
+To test billing locally, forward Stripe webhooks to the app:
+
+```bash
+stripe listen --forward-to localhost:3000/api/stripe/webhook
+```
+
+Create two Stripe prices and set them in your environment:
+- `STRIPE_PRO_PRICE_ID` for the recurring Pro subscription
+- `STRIPE_LIFETIME_PRICE_ID` for the one-time Lifetime purchase
 
 ### 4. Start the application with Docker
 

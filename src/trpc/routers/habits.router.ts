@@ -1,14 +1,7 @@
-import { TRPCError } from "@trpc/server";
-import {
-    and,
-    asc,
-    eq,
-    getTableColumns,
-    inArray,
-    isNotNull,
-    isNull,
-} from "drizzle-orm";
 import { completions, habits } from "@/db/schema";
+import { getEntitlementsForUserId } from "@/lib/entitlements";
+import { hasLifecycleEvent, logLifecycleEvent } from "@/lib/lifecycle";
+import { isHabitScheduledOn } from "@/lib/utils";
 import {
     archiveHabitSchema,
     deleteHabitSchema,
@@ -19,6 +12,17 @@ import {
     listHabitsSchema,
 } from "@/schemas";
 import { createTRPCRouter, protectedProcedure } from "@/trpc/init";
+import { TRPCError } from "@trpc/server";
+import {
+    and,
+    asc,
+    count,
+    eq,
+    getTableColumns,
+    inArray,
+    isNotNull,
+    isNull,
+} from "drizzle-orm";
 
 export const habitsRouter = createTRPCRouter({
     list: protectedProcedure
@@ -29,6 +33,7 @@ export const habitsRouter = createTRPCRouter({
                     ...getTableColumns(habits),
                     completedAt: completions.date,
                     completionNote: completions.note,
+                    completionValue: completions.value,
                 })
                 .from(habits)
                 .leftJoin(
@@ -51,56 +56,7 @@ export const habitsRouter = createTRPCRouter({
                 )
                 .orderBy(asc(habits.createdAt));
 
-            const dayOfWeek = input.date.getUTCDay();
-
-            const inputDateUtc = new Date(
-                Date.UTC(
-                    input.date.getUTCFullYear(),
-                    input.date.getUTCMonth(),
-                    input.date.getUTCDate(),
-                ),
-            );
-
-            return rows.filter((row) => {
-                switch (row.frequencyType) {
-                    case "daily":
-                        return true;
-                    case "weekly":
-                        return row.frequencyDaysOfWeek?.includes(dayOfWeek);
-                    case "custom": {
-                        if (!row.frequencyInterval || !row.frequencyUnit)
-                            return false;
-
-                        const start = new Date(
-                            Date.UTC(
-                                row.createdAt.getUTCFullYear(),
-                                row.createdAt.getUTCMonth(),
-                                row.createdAt.getUTCDate(),
-                            ),
-                        );
-                        const target = inputDateUtc;
-
-                        const daysDiff = Math.round(
-                            (target.getTime() - start.getTime()) /
-                                (1000 * 60 * 60 * 24),
-                        );
-
-                        if (daysDiff < 0) return false;
-
-                        const intervalDays =
-                            row.frequencyUnit === "weeks"
-                                ? row.frequencyInterval * 7
-                                : row.frequencyInterval;
-
-                        return daysDiff % intervalDays === 0;
-                    }
-                    default:
-                        throw new TRPCError({
-                            code: "INTERNAL_SERVER_ERROR",
-                            message: "Invalid frequency type",
-                        });
-                }
-            });
+            return rows.filter((row) => isHabitScheduledOn(row, input.date));
         }),
 
     listAll: protectedProcedure.query(async ({ ctx }) => {
@@ -108,7 +64,11 @@ export const habitsRouter = createTRPCRouter({
             .select()
             .from(habits)
             .where(
-                and(eq(habits.userId, ctx.user.id), isNull(habits.archivedAt)),
+                and(
+                    eq(habits.userId, ctx.user.id),
+                    isNull(habits.archivedAt),
+                    isNull(habits.deletedAt),
+                ),
             )
             .orderBy(asc(habits.createdAt));
     }),
@@ -121,6 +81,7 @@ export const habitsRouter = createTRPCRouter({
                 and(
                     eq(habits.userId, ctx.user.id),
                     isNotNull(habits.archivedAt),
+                    isNull(habits.deletedAt),
                 ),
             )
             .orderBy(asc(habits.createdAt));
@@ -129,6 +90,91 @@ export const habitsRouter = createTRPCRouter({
     create: protectedProcedure
         .input(habitValuesSchema)
         .mutation(async ({ ctx, input }) => {
+            const entitlements = await getEntitlementsForUserId(
+                ctx.db,
+                ctx.user.id,
+            );
+
+            if (entitlements.maxActiveHabits !== null) {
+                const [result] = await ctx.db
+                    .select({ count: count() })
+                    .from(habits)
+                    .where(
+                        and(
+                            eq(habits.userId, ctx.user.id),
+                            isNull(habits.archivedAt),
+                            isNull(habits.deletedAt),
+                        ),
+                    );
+
+                if (result.count >= entitlements.maxActiveHabits) {
+                    throw new TRPCError({
+                        code: "FORBIDDEN",
+                        message: `Free plan users can create up to ${entitlements.maxActiveHabits} active habits. Upgrade to Pro for unlimited habits.`,
+                    });
+                }
+
+                const [habit] = await ctx.db
+                    .insert(habits)
+                    .values({
+                        userId: ctx.user.id,
+                        name: input.name,
+                        description: input.description,
+                        frequencyType: input.frequencyType,
+                        frequencyDaysOfWeek:
+                            input.frequencyType === "weekly"
+                                ? input.frequencyDaysOfWeek
+                                : null,
+                        frequencyInterval:
+                            input.frequencyType === "custom"
+                                ? input.frequencyInterval
+                                : null,
+                        frequencyUnit:
+                            input.frequencyType === "custom"
+                                ? input.frequencyUnit
+                                : null,
+                        color: input.color,
+                        icon: input.icon ?? null,
+                        category: input.category ?? "other",
+                        goalType: input.goalType ?? "binary",
+                        targetValue:
+                            input.goalType && input.goalType !== "binary"
+                                ? input.targetValue
+                                : null,
+                        targetUnit:
+                            input.goalType && input.goalType !== "binary"
+                                ? input.targetUnit
+                                : null,
+                        reminderEnabled: input.reminderEnabled ?? false,
+                    })
+                    .returning();
+
+                await logLifecycleEvent(ctx.db, ctx.user.id, "habit_created", {
+                    habitId: habit.id,
+                    goalType: habit.goalType,
+                    reminderEnabled: habit.reminderEnabled,
+                });
+
+                if (result.count === 0) {
+                    const alreadyLogged = await hasLifecycleEvent(
+                        ctx.db,
+                        ctx.user.id,
+                        "first_habit_created",
+                    );
+
+                    if (!alreadyLogged) {
+                        await logLifecycleEvent(
+                            ctx.db,
+                            ctx.user.id,
+                            "first_habit_created",
+                            { habitId: habit.id, source: "manual" },
+                        );
+                    }
+                }
+
+                return habit;
+            }
+
             const [habit] = await ctx.db
                 .insert(habits)
                 .values({
@@ -151,8 +197,24 @@ export const habitsRouter = createTRPCRouter({
                     color: input.color,
                     icon: input.icon ?? null,
                     category: input.category ?? "other",
+                    goalType: input.goalType ?? "binary",
+                    targetValue:
+                        input.goalType && input.goalType !== "binary"
+                            ? input.targetValue
+                            : null,
+                    targetUnit:
+                        input.goalType && input.goalType !== "binary"
+                            ? input.targetUnit
+                            : null,
+                    reminderEnabled: input.reminderEnabled ?? false,
                 })
                 .returning();
+
+            await logLifecycleEvent(ctx.db, ctx.user.id, "habit_created", {
+                habitId: habit.id,
+                goalType: habit.goalType,
+                reminderEnabled: habit.reminderEnabled,
+            });
             return habit;
         }),
 
@@ -169,6 +231,16 @@ export const habitsRouter = createTRPCRouter({
                     color: values.color,
                     icon: values.icon ?? null,
                     category: values.category ?? "other",
+                    goalType: values.goalType ?? "binary",
+                    targetValue:
+                        values.goalType && values.goalType !== "binary"
+                            ? values.targetValue
+                            : null,
+                    targetUnit:
+                        values.goalType && values.goalType !== "binary"
+                            ? values.targetUnit
+                            : null,
+                    reminderEnabled: values.reminderEnabled ?? false,
                     frequencyType: values.frequencyType,
                     frequencyDaysOfWeek:
                         values.frequencyType === "weekly"
@@ -183,8 +255,21 @@ export const habitsRouter = createTRPCRouter({
                             ? values.frequencyUnit
                             : null,
                 })
-                .where(and(eq(habits.id, id), eq(habits.userId, ctx.user.id)))
+                .where(
+                    and(
+                        eq(habits.id, id),
+                        eq(habits.userId, ctx.user.id),
+                        isNull(habits.deletedAt),
+                    ),
+                )
                 .returning();
+
+            if (!updated) {
+                throw new TRPCError({
+                    code: "NOT_FOUND",
+                    message: "Habit not found",
+                });
+            }
 
             return updated;
         }),
@@ -201,6 +286,7 @@ export const habitsRouter = createTRPCRouter({
                     and(
                         eq(habits.id, input.id),
                         eq(habits.userId, ctx.user.id),
+                        isNull(habits.deletedAt),
                     ),
                 )
                 .returning();
@@ -219,14 +305,19 @@ export const habitsRouter = createTRPCRouter({
         .input(deleteHabitSchema)
         .mutation(async ({ ctx, input }) => {
             const [deleted] = await ctx.db
-                .delete(habits)
+                .update(habits)
+                .set({
+                    deletedAt: new Date(),
+                    archivedAt: null,
+                    updatedAt: new Date(),
+                })
                 .where(
                     and(
                         eq(habits.id, input.id),
                         eq(habits.userId, ctx.user.id),
                     ),
                 )
-                .returning({ id: habits.id });
+                .returning({ id: habits.id, name: habits.name });
 
             if (!deleted) {
                 throw new TRPCError({
@@ -235,6 +326,11 @@ export const habitsRouter = createTRPCRouter({
                 });
             }
 
+            await logLifecycleEvent(ctx.db, ctx.user.id, "habit_deleted", {
+                habitId: deleted.id,
+                habitName: deleted.name,
+            });
+
             return deleted;
         }),
 
@@ -242,7 +338,12 @@ export const habitsRouter = createTRPCRouter({
         .input(deleteManyHabitsSchema)
         .mutation(async ({ ctx, input }) => {
             await ctx.db
-                .delete(habits)
+                .update(habits)
+                .set({
+                    deletedAt: new Date(),
+                    archivedAt: null,
+                    updatedAt: new Date(),
+                })
                 .where(
                     and(
                         inArray(habits.id, input.ids),
@@ -254,6 +355,19 @@ export const habitsRouter = createTRPCRouter({
     exportData: protectedProcedure
         .input(exportHabitsSchema)
         .query(async ({ ctx, input }) => {
+            const entitlements = await getEntitlementsForUserId(
+                ctx.db,
+                ctx.user.id,
+            );
+
+            if (!entitlements.canExport) {
+                throw new TRPCError({
+                    code: "FORBIDDEN",
+                    message:
+                        "CSV export is available on Pro and Lifetime plans.",
+                });
+            }
+
             const { gte, lte } = await import("drizzle-orm");
 
             const userHabits = await ctx.db

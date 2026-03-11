@@ -17,6 +17,13 @@ export const toggleCompletionSchema = z.object({
     note: z.string().max(500).optional(),
 });
 
+export const setCompletionProgressSchema = z.object({
+    habitId: z.uuid(),
+    date: z.date(),
+    value: z.number().int().min(0).max(1440),
+    note: z.string().max(500).optional(),
+});
+
 export const updateCompletionNoteSchema = z.object({
     habitId: z.uuid(),
     date: z.date(),

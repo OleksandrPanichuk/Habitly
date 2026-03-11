@@ -3,14 +3,13 @@
 import { Button, Chip, Tooltip } from "@heroui/react";
 import { motion } from "framer-motion";
 import {
-    BarChart2Icon,
+    ArchiveIcon,
     ChevronLeftIcon,
     ChevronRightIcon,
     LayoutTemplateIcon,
     PlusIcon,
     SparklesIcon,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 
 interface IHabitsHeaderProps {
     date: Date;
@@ -20,6 +19,7 @@ interface IHabitsHeaderProps {
     totalHabits: number;
     completedHabits: number;
     showArchived?: boolean;
+    onHideArchived?: () => void;
 }
 
 const DAY_NAMES = [
@@ -62,18 +62,15 @@ const MONTH_NAMES_LONG = [
     "December",
 ];
 
-/** Returns a UTC-midnight Date representing today. */
 function utcToday(): Date {
     const now = new Date();
     return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
 }
 
-/** Formats a UTC-midnight date as "MMMM d, yyyy" using UTC getters. */
 function formatUtcLong(date: Date): string {
     return `${MONTH_NAMES_LONG[date.getUTCMonth()]} ${date.getUTCDate()}, ${date.getUTCFullYear()}`;
 }
 
-/** Formats a UTC-midnight date as "EEEE, MMM d" using UTC getters. */
 function formatUtcLabel(date: Date): string {
     return `${DAY_NAMES[date.getUTCDay()]}, ${MONTH_NAMES_SHORT[date.getUTCMonth()]} ${date.getUTCDate()}`;
 }
@@ -119,8 +116,8 @@ export const HabitsHeader = ({
     totalHabits,
     completedHabits,
     showArchived = false,
+    onHideArchived,
 }: IHabitsHeaderProps) => {
-    const router = useRouter();
     const progress =
         totalHabits > 0 ? Math.round((completedHabits / totalHabits) * 100) : 0;
     const dateLabel = formatDateLabel(date);
@@ -153,9 +150,55 @@ export const HabitsHeader = ({
 
     const goToday = () => onDateChange(utcToday());
 
+    if (showArchived) {
+        return (
+            <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-sm md:flex-row md:items-center md:justify-between">
+                <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-warning/10 text-warning">
+                        <ArchiveIcon size={20} />
+                    </div>
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h1 className="text-xl font-bold tracking-tight text-foreground">
+                                Archived habits
+                            </h1>
+                            <Chip
+                                size="sm"
+                                variant="flat"
+                                className="bg-warning/10 text-warning"
+                            >
+                                {totalHabits}
+                            </Chip>
+                        </div>
+                        <p className="mt-1 text-sm text-foreground-400">
+                            Keep paused habits here without letting them crowd
+                            the daily checklist.
+                        </p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end md:self-auto">
+                    {onHideArchived ? (
+                        <Button variant="flat" onPress={onHideArchived}>
+                            Back to active habits
+                        </Button>
+                    ) : null}
+                    <Button
+                        color="primary"
+                        startContent={<PlusIcon size={16} />}
+                        onPress={onCreateHabit}
+                        className="font-semibold shadow-lg shadow-primary/25"
+                    >
+                        New Habit
+                    </Button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-5">
-            <div className="flex items-center justify-between gap-3 md:flex-row flex-col">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-2">
                     <Tooltip content="Previous day" placement="bottom">
                         <Button
@@ -169,13 +212,13 @@ export const HabitsHeader = ({
                         </Button>
                     </Tooltip>
 
-                    <div className="flex flex-col items-center w-48">
+                    <div className="flex w-48 flex-col items-center">
                         <motion.h2
                             key={date.toISOString()}
                             initial={{ opacity: 0, y: -6 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 0.2 }}
-                            className="text-xl font-bold text-foreground tracking-tight"
+                            className="text-xl font-bold tracking-tight text-foreground"
                             suppressHydrationWarning
                         >
                             {dateLabel}
@@ -214,19 +257,7 @@ export const HabitsHeader = ({
                     )}
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <Tooltip content="Analytics" placement="bottom" delay={400}>
-                        <Button
-                            isIconOnly
-                            variant="flat"
-                            size="sm"
-                            onPress={() => router.push("/analytics")}
-                            className="text-foreground-400 hover:text-foreground"
-                            aria-label="Analytics"
-                        >
-                            <BarChart2Icon size={16} />
-                        </Button>
-                    </Tooltip>
+                <div className="flex items-center gap-2 self-end md:self-auto">
                     <Tooltip
                         content="Browse templates"
                         placement="bottom"
@@ -254,12 +285,12 @@ export const HabitsHeader = ({
                 </div>
             </div>
 
-            {totalHabits > 0 && !showArchived && (
+            {totalHabits > 0 && !showArchived ? (
                 <motion.div
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.3, delay: 0.05 }}
-                    className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm px-5 py-4"
+                    className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-sm"
                 >
                     <div className="pointer-events-none absolute -top-6 -right-6 h-24 w-24 rounded-full bg-primary/20 blur-2xl" />
                     <div className="pointer-events-none absolute -bottom-6 -left-6 h-20 w-20 rounded-full bg-secondary/15 blur-2xl" />
@@ -324,17 +355,17 @@ export const HabitsHeader = ({
                                     </linearGradient>
                                 </defs>
                             </svg>
-                            <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-foreground rotate-0">
+                            <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-foreground">
                                 {progress}%
                             </span>
                         </div>
 
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-0.5">
+                        <div className="min-w-0 flex-1">
+                            <div className="mb-0.5 flex items-center gap-2">
                                 <span className="text-sm font-semibold text-foreground">
                                     {completedHabits} / {totalHabits} completed
                                 </span>
-                                {progress === 100 && (
+                                {progress === 100 ? (
                                     <Chip
                                         size="sm"
                                         color="success"
@@ -346,8 +377,9 @@ export const HabitsHeader = ({
                                     >
                                         Perfect day!
                                     </Chip>
-                                )}
+                                ) : null}
                             </div>
+
                             <p className="text-xs text-foreground-400">
                                 {getMotivationalMessage(
                                     completedHabits,
@@ -355,7 +387,7 @@ export const HabitsHeader = ({
                                 )}
                             </p>
 
-                            <div className="mt-2 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
                                 <motion.div
                                     className="h-full rounded-full bg-linear-to-r from-primary to-secondary"
                                     initial={{ width: 0 }}
@@ -369,7 +401,7 @@ export const HabitsHeader = ({
                         </div>
                     </div>
                 </motion.div>
-            )}
+            ) : null}
         </div>
     );
 };

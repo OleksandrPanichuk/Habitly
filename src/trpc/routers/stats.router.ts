@@ -1,20 +1,25 @@
-import { TRPCError } from "@trpc/server";
-import { and, eq, gte, inArray, lte, min } from "drizzle-orm";
 import type { THabit } from "@/db/schema";
-import { completions, habits } from "@/db/schema";
+import { completions, habits, userPreferences } from "@/db/schema";
 import {
     calculateStreaks,
     getDatesInRange,
     getEffectiveStart,
+    isHabitCompleteForValue,
     isHabitScheduledOn,
     toDateKey,
 } from "@/lib/utils";
-import { getHabitStatsSchema, getStatsSchema } from "@/schemas";
+import {
+    getCoachStateSchema,
+    getHabitStatsSchema,
+    getStatsSchema,
+} from "@/schemas";
 import { createTRPCRouter, protectedProcedure } from "@/trpc/init";
+import { TRPCError } from "@trpc/server";
+import { and, eq, gte, inArray, lte, min } from "drizzle-orm";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function loadEffectiveStartMap(
-    db: any,
+    db: typeof import("@/db").db,
     userHabits: THabit[],
 ): Promise<Map<string, Date>> {
     const map = new Map<string, Date>();
@@ -45,6 +50,27 @@ async function loadEffectiveStartMap(
     return map;
 }
 
+function getRelevantHabitsForRange(
+    userHabits: THabit[],
+    dates: Date[],
+    effectiveStartMap: Map<string, Date>,
+    rangeCompletions: Array<{ habitId: string }>,
+) {
+    return userHabits.filter((habit) => {
+        if (
+            rangeCompletions.some(
+                (completion) => completion.habitId === habit.id,
+            )
+        ) {
+            return true;
+        }
+
+        return dates.some((date) =>
+            isHabitScheduledOn(habit, date, effectiveStartMap.get(habit.id)),
+        );
+    });
+}
+
 export const statsRouter = createTRPCRouter({
     getSummary: protectedProcedure
         .input(getStatsSchema)
@@ -60,6 +86,7 @@ export const statsRouter = createTRPCRouter({
                         id: completions.id,
                         date: completions.date,
                         habitId: completions.habitId,
+                        value: completions.value,
                     })
                     .from(completions)
                     .innerJoin(habits, eq(habits.id, completions.habitId))
@@ -74,14 +101,34 @@ export const statsRouter = createTRPCRouter({
             ]);
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
+            const relevantHabits = getRelevantHabitsForRange(
+                userHabits,
+                allDates,
+                effectiveStartMap,
+                rangeCompletions,
+            );
 
             const completedDaySet = new Set(
-                rangeCompletions.map((c: { date: Date }) => toDateKey(c.date)),
+                rangeCompletions
+                    .filter((completion) => {
+                        const habit = userHabits.find(
+                            (userHabit) => userHabit.id === completion.habitId,
+                        );
+
+                        return habit
+                            ? isHabitCompleteForValue(
+                                  habit,
+                                  completion.value,
+                                  completion.date,
+                              )
+                            : false;
+                    })
+                    .map((c: { date: Date }) => toDateKey(c.date)),
             );
 
             let totalScheduled = 0;
 
-            for (const habit of userHabits) {
+            for (const habit of relevantHabits) {
                 const effectiveStart = effectiveStartMap.get(habit.id);
                 for (const date of allDates) {
                     if (isHabitScheduledOn(habit, date, effectiveStart))
@@ -89,7 +136,18 @@ export const statsRouter = createTRPCRouter({
                 }
             }
 
-            const totalCompletions = rangeCompletions.length;
+            const totalCompletions = rangeCompletions.filter((completion) => {
+                const habit = userHabits.find(
+                    (userHabit) => userHabit.id === completion.habitId,
+                );
+                return habit
+                    ? isHabitCompleteForValue(
+                          habit,
+                          completion.value,
+                          completion.date,
+                      )
+                    : false;
+            }).length;
 
             const completionRate =
                 totalScheduled > 0
@@ -108,14 +166,22 @@ export const statsRouter = createTRPCRouter({
                 const key = toDateKey(date);
                 return {
                     date,
-                    count: rangeCompletions.filter(
-                        (c: { date: Date }) => toDateKey(c.date) === key,
-                    ).length,
+                    count: rangeCompletions.filter((c) => {
+                        const habit = userHabits.find(
+                            (userHabit) => userHabit.id === c.habitId,
+                        );
+
+                        return (
+                            toDateKey(c.date) === key &&
+                            !!habit &&
+                            isHabitCompleteForValue(habit, c.value, c.date)
+                        );
+                    }).length,
                 };
             });
 
             return {
-                totalHabits: userHabits.length,
+                totalHabits: relevantHabits.length,
                 totalCompletions,
                 totalScheduled,
                 completionRate,
@@ -149,6 +215,7 @@ export const statsRouter = createTRPCRouter({
                 .select({
                     id: completions.id,
                     date: completions.date,
+                    value: completions.value,
                 })
                 .from(completions)
                 .where(
@@ -173,7 +240,11 @@ export const statsRouter = createTRPCRouter({
             );
 
             const completedDatesSet = new Set(
-                habitCompletions.map((c: { date: Date }) => toDateKey(c.date)),
+                habitCompletions
+                    .filter((c) =>
+                        isHabitCompleteForValue(habit, c.value, c.date),
+                    )
+                    .map((c: { date: Date }) => toDateKey(c.date)),
             );
 
             const allDates = getDatesInRange(input.startDate, input.endDate);
@@ -209,12 +280,153 @@ export const statsRouter = createTRPCRouter({
 
             return {
                 habit,
-                totalCompletions: habitCompletions.length,
+                totalCompletions: habitCompletions.filter((completion) =>
+                    isHabitCompleteForValue(
+                        habit,
+                        completion.value,
+                        completion.date,
+                    ),
+                ).length,
                 totalScheduled: scheduledDates.length,
                 completionRate,
                 currentStreak,
                 longestStreak,
                 completionsByDay,
+            };
+        }),
+
+    getCoachState: protectedProcedure
+        .input(getCoachStateSchema)
+        .query(async ({ ctx }) => {
+            const now = new Date();
+            const today = new Date(
+                Date.UTC(
+                    now.getUTCFullYear(),
+                    now.getUTCMonth(),
+                    now.getUTCDate(),
+                ),
+            );
+            const yesterday = new Date(
+                Date.UTC(
+                    today.getUTCFullYear(),
+                    today.getUTCMonth(),
+                    today.getUTCDate() - 1,
+                ),
+            );
+            const weekStart = new Date(
+                Date.UTC(
+                    today.getUTCFullYear(),
+                    today.getUTCMonth(),
+                    today.getUTCDate() - 6,
+                ),
+            );
+
+            const [userHabits, preferences, recentCompletions] =
+                await Promise.all([
+                    ctx.db
+                        .select()
+                        .from(habits)
+                        .where(eq(habits.userId, ctx.user.id)),
+                    ctx.db
+                        .select()
+                        .from(userPreferences)
+                        .where(eq(userPreferences.userId, ctx.user.id))
+                        .limit(1),
+                    ctx.db
+                        .select({
+                            habitId: completions.habitId,
+                            date: completions.date,
+                            note: completions.note,
+                            value: completions.value,
+                        })
+                        .from(completions)
+                        .innerJoin(habits, eq(habits.id, completions.habitId))
+                        .where(
+                            and(
+                                eq(habits.userId, ctx.user.id),
+                                gte(completions.date, weekStart),
+                                lte(completions.date, today),
+                            ),
+                        ),
+                ]);
+
+            const effectiveStartMap = await loadEffectiveStartMap(
+                ctx.db,
+                userHabits,
+            );
+            const yesterdayKey = toDateKey(yesterday);
+            const todayKey = toDateKey(today);
+
+            const missedYesterday = userHabits
+                .filter((habit) =>
+                    isHabitScheduledOn(
+                        habit,
+                        yesterday,
+                        effectiveStartMap.get(habit.id),
+                    ),
+                )
+                .filter((habit) => {
+                    const completion = recentCompletions.find(
+                        (item) =>
+                            item.habitId === habit.id &&
+                            toDateKey(item.date) === yesterdayKey,
+                    );
+
+                    return (
+                        !completion ||
+                        !isHabitCompleteForValue(
+                            habit,
+                            completion.value,
+                            completion.date,
+                        )
+                    );
+                })
+                .slice(0, 3)
+                .map((habit) => habit.name);
+
+            const reflectionCandidates = userHabits
+                .filter((habit) => {
+                    const completion = recentCompletions.find(
+                        (item) =>
+                            item.habitId === habit.id &&
+                            toDateKey(item.date) === todayKey,
+                    );
+
+                    return (
+                        !!completion &&
+                        isHabitCompleteForValue(
+                            habit,
+                            completion.value,
+                            completion.date,
+                        ) &&
+                        !completion.note
+                    );
+                })
+                .slice(0, 3)
+                .map((habit) => habit.name);
+
+            const onboardingDate = preferences[0]?.onboardingCompletedAt;
+            const onboardingDay = onboardingDate
+                ? Math.max(
+                      1,
+                      Math.floor(
+                          (today.getTime() - onboardingDate.getTime()) /
+                              (1000 * 60 * 60 * 24),
+                      ) + 1,
+                  )
+                : 1;
+
+            return {
+                onboardingDay,
+                preferredCheckInTime:
+                    preferences[0]?.preferredCheckInTime ?? "19:00",
+                reminderEmailEnabled:
+                    preferences[0]?.reminderEmailEnabled ?? false,
+                weeklyReviewDue:
+                    today.getUTCDay() ===
+                    (preferences[0]?.weeklyReviewDay ?? 0),
+                missedYesterday,
+                reflectionCandidates,
             };
         }),
 });

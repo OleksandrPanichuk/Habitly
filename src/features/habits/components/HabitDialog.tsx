@@ -1,6 +1,12 @@
 ﻿"use client";
 
 import {
+    habitValuesSchema,
+    type THabitFormInput,
+    type THabitFormValues,
+} from "@/schemas";
+import type { THabitWithStatus } from "@/types";
+import {
     Button,
     Input,
     Modal,
@@ -16,12 +22,6 @@ import {
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef } from "react";
 import { Controller, useForm } from "react-hook-form";
-import {
-    habitValuesSchema,
-    type THabitFormInput,
-    type THabitFormValues,
-} from "@/schemas";
-import type { THabitWithStatus } from "@/types";
 import {
     COLORS,
     DAYS_OF_WEEK,
@@ -40,6 +40,12 @@ function getDefaultValues(habit?: THabitWithStatus | null): THabitFormValues {
             icon: habit.icon ?? undefined,
             category:
                 (habit.category as THabitFormValues["category"]) ?? "other",
+            goalType: habit.goalType,
+            targetValue: habit.targetValue ?? undefined,
+            targetUnit:
+                (habit.targetUnit as THabitFormValues["targetUnit"]) ??
+                undefined,
+            reminderEnabled: habit.reminderEnabled,
             frequencyType: habit.frequencyType,
             frequencyDaysOfWeek: habit.frequencyDaysOfWeek ?? [],
             frequencyInterval: habit.frequencyInterval ?? undefined,
@@ -52,6 +58,10 @@ function getDefaultValues(habit?: THabitWithStatus | null): THabitFormValues {
         color: DEFAULT_COLOR,
         icon: undefined,
         category: "other",
+        goalType: "binary",
+        targetValue: undefined,
+        targetUnit: undefined,
+        reminderEnabled: false,
         frequencyType: "daily",
         frequencyDaysOfWeek: [],
         frequencyInterval: undefined,
@@ -95,11 +105,18 @@ export const HabitDialog = ({
     }, [habit, reset]);
 
     const frequencyType = watch("frequencyType");
+    const goalType = watch("goalType") ?? "binary";
     const selectedColor = watch("color") ?? DEFAULT_COLOR;
     const selectedDays = watch("frequencyDaysOfWeek") ?? [];
     const selectedCategory = watch("category") ?? "other";
+    const reminderEnabled = watch("reminderEnabled") ?? false;
 
     const CATEGORY_ICONS = HABIT_CATEGORIES.map((c) => c.icon);
+    const GOAL_TYPE_OPTIONS = [
+        { value: "binary", label: "Simple check-off" },
+        { value: "count", label: "Count target" },
+        { value: "duration", label: "Duration target" },
+    ] as const;
 
     const toggleDay = (day: number) => {
         const next = selectedDays.includes(day)
@@ -112,7 +129,7 @@ export const HabitDialog = ({
 
     return (
         <Modal isOpen={open} onOpenChange={onOpenChange} placement="center">
-            <ModalContent>
+            <ModalContent className="max-h-[80vh] overflow-auto">
                 <form onSubmit={handleSubmit(onSubmit)}>
                     <ModalHeader className="flex flex-col gap-1">
                         {isEditMode ? "Edit Habit" : "Create Habit"}
@@ -421,6 +438,143 @@ export const HabitDialog = ({
                                 />
                             </div>
                         )}
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <Controller
+                                control={control}
+                                name="goalType"
+                                render={({ field }) => (
+                                    <Select
+                                        label="Tracking mode"
+                                        labelPlacement="outside"
+                                        selectedKeys={[field.value ?? "binary"]}
+                                        onSelectionChange={(keys) => {
+                                            const val = Array.from(keys)[0] as
+                                                | string
+                                                | undefined;
+                                            if (!val) return;
+                                            field.onChange(val);
+                                            if (val === "binary") {
+                                                setValue(
+                                                    "targetValue",
+                                                    undefined,
+                                                );
+                                                setValue(
+                                                    "targetUnit",
+                                                    undefined,
+                                                );
+                                            } else {
+                                                setValue(
+                                                    "targetUnit",
+                                                    val === "duration"
+                                                        ? "minutes"
+                                                        : "times",
+                                                    { shouldValidate: true },
+                                                );
+                                            }
+                                        }}
+                                    >
+                                        {GOAL_TYPE_OPTIONS.map((option) => (
+                                            <SelectItem key={option.value}>
+                                                {option.label}
+                                            </SelectItem>
+                                        ))}
+                                    </Select>
+                                )}
+                            />
+
+                            {goalType === "binary" ? (
+                                <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+                                    <p className="text-sm font-medium text-foreground">
+                                        Goal target
+                                    </p>
+                                    <p className="mt-1 text-xs text-foreground-400 leading-relaxed">
+                                        This habit is complete with a single
+                                        check-off.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-[1fr_1fr] gap-3">
+                                    <Input
+                                        type="number"
+                                        label="Target"
+                                        labelPlacement="outside"
+                                        min={1}
+                                        isInvalid={!!errors.targetValue}
+                                        errorMessage={
+                                            errors.targetValue?.message
+                                        }
+                                        {...register("targetValue", {
+                                            valueAsNumber: true,
+                                        })}
+                                    />
+                                    <Controller
+                                        control={control}
+                                        name="targetUnit"
+                                        render={({ field }) => (
+                                            <Select
+                                                label="Unit"
+                                                labelPlacement="outside"
+                                                selectedKeys={
+                                                    field.value
+                                                        ? [field.value]
+                                                        : []
+                                                }
+                                                onSelectionChange={(keys) => {
+                                                    const val = Array.from(
+                                                        keys,
+                                                    )[0] as string | undefined;
+                                                    if (!val) return;
+                                                    field.onChange(val);
+                                                }}
+                                                isDisabled={
+                                                    goalType === "duration"
+                                                }
+                                            >
+                                                <SelectItem key="times">
+                                                    Times
+                                                </SelectItem>
+                                                <SelectItem key="minutes">
+                                                    Minutes
+                                                </SelectItem>
+                                            </Select>
+                                        )}
+                                    />
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-white/5 px-3.5 py-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-medium text-foreground">
+                                        Reminder eligible
+                                    </p>
+                                    <p className="mt-1 text-xs text-foreground-400 leading-relaxed">
+                                        Mark this habit for the daily email
+                                        reminder. Delivery is controlled by your
+                                        account settings.
+                                    </p>
+                                </div>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant={reminderEnabled ? "solid" : "flat"}
+                                    color={
+                                        reminderEnabled ? "primary" : "default"
+                                    }
+                                    onPress={() =>
+                                        setValue(
+                                            "reminderEnabled",
+                                            !reminderEnabled,
+                                            { shouldValidate: true },
+                                        )
+                                    }
+                                >
+                                    {reminderEnabled ? "Included" : "Off"}
+                                </Button>
+                            </div>
+                        </div>
                     </ModalBody>
 
                     <ModalFooter>

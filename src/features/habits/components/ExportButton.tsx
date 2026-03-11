@@ -1,5 +1,11 @@
 "use client";
 
+import { authClient } from "@/lib/auth-client";
+import {
+    getEntitlementsForTier,
+    normalizeSubscriptionTier,
+} from "@/lib/entitlements";
+import { useTRPC } from "@/trpc/client";
 import {
     Button,
     Dropdown,
@@ -12,7 +18,6 @@ import { format, subMonths } from "date-fns";
 import { DownloadIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useTRPC } from "@/trpc/client";
 
 type ExportRange = "30d" | "90d" | "6m" | "1y" | "all";
 
@@ -164,8 +169,22 @@ function downloadCsv(content: string, filename: string) {
 
 export const ExportButton = () => {
     const trpc = useTRPC();
+    const { data: session } = authClient.useSession();
     const [selectedRange, setSelectedRange] = useState<ExportRange>("90d");
     const [isExporting, setIsExporting] = useState(false);
+
+    const { data: billingStatus } = useQuery({
+        ...trpc.billing.getStatus.queryOptions(),
+        enabled: Boolean(session?.user),
+        retry: false,
+    });
+
+    const subscriptionTier = normalizeSubscriptionTier(
+        billingStatus?.subscriptionTier ??
+            (session?.user as { subscriptionTier?: string | null } | undefined)
+                ?.subscriptionTier,
+    );
+    const entitlements = getEntitlementsForTier(subscriptionTier);
 
     const { startDate, endDate } = useMemo(
         () => getRangeDates(selectedRange),
@@ -178,6 +197,13 @@ export const ExportButton = () => {
     });
 
     const handleExport = async (type: "habits" | "completions" | "both") => {
+        if (!entitlements.canExport) {
+            toast.info(
+                "Upgrade to Pro to export habits and completions as CSV.",
+            );
+            return;
+        }
+
         setIsExporting(true);
         try {
             const { data, error } = await refetch();
@@ -210,70 +236,95 @@ export const ExportButton = () => {
 
     return (
         <div className="flex items-center gap-1">
-            <Dropdown>
-                <DropdownTrigger>
-                    <Button
-                        size="sm"
-                        variant="flat"
-                        className="text-xs text-foreground-500 h-8 px-2.5"
-                        isDisabled={isExporting}
-                    >
-                        {RANGE_LABELS[selectedRange]}
-                    </Button>
-                </DropdownTrigger>
-                <DropdownMenu
-                    aria-label="Select export range"
-                    onAction={(key) => setSelectedRange(key as ExportRange)}
-                    selectedKeys={[selectedRange]}
-                    selectionMode="single"
-                >
-                    {(
-                        Object.entries(RANGE_LABELS) as [ExportRange, string][]
-                    ).map(([key, label]) => (
-                        <DropdownItem key={key}>{label}</DropdownItem>
-                    ))}
-                </DropdownMenu>
-            </Dropdown>
-
-            <Dropdown>
-                <DropdownTrigger>
-                    <Button
-                        size="sm"
-                        variant="flat"
-                        isIconOnly
-                        isLoading={isExporting}
-                        className="text-foreground-400 hover:text-foreground h-8 w-8"
-                        aria-label="Export data"
-                    >
-                        {!isExporting && <DownloadIcon size={14} />}
-                    </Button>
-                </DropdownTrigger>
-                <DropdownMenu
-                    aria-label="Export options"
-                    onAction={(key) =>
-                        handleExport(key as "habits" | "completions" | "both")
+            {!entitlements.canExport ? (
+                <Button
+                    size="sm"
+                    variant="flat"
+                    onPress={() =>
+                        toast.info(
+                            "CSV export is available on Pro and Lifetime plans.",
+                        )
                     }
+                    className="text-xs text-foreground-500 h-8 px-2.5"
                 >
-                    <DropdownItem
-                        key="habits"
-                        description="Export all your habit definitions"
-                    >
-                        Export Habits
-                    </DropdownItem>
-                    <DropdownItem
-                        key="completions"
-                        description="Export all completion records"
-                    >
-                        Export Completions
-                    </DropdownItem>
-                    <DropdownItem
-                        key="both"
-                        description="Download both CSV files"
-                    >
-                        Export Both
-                    </DropdownItem>
-                </DropdownMenu>
-            </Dropdown>
+                    <DownloadIcon size={14} />
+                    Export • Pro
+                </Button>
+            ) : (
+                <>
+                    <Dropdown>
+                        <DropdownTrigger>
+                            <Button
+                                size="sm"
+                                variant="flat"
+                                className="text-xs text-foreground-500 h-8 px-2.5"
+                                isDisabled={isExporting}
+                            >
+                                {RANGE_LABELS[selectedRange]}
+                            </Button>
+                        </DropdownTrigger>
+                        <DropdownMenu
+                            aria-label="Select export range"
+                            onAction={(key) =>
+                                setSelectedRange(key as ExportRange)
+                            }
+                            selectedKeys={[selectedRange]}
+                            selectionMode="single"
+                        >
+                            {(
+                                Object.entries(RANGE_LABELS) as [
+                                    ExportRange,
+                                    string,
+                                ][]
+                            ).map(([key, label]) => (
+                                <DropdownItem key={key}>{label}</DropdownItem>
+                            ))}
+                        </DropdownMenu>
+                    </Dropdown>
+
+                    <Dropdown>
+                        <DropdownTrigger>
+                            <Button
+                                size="sm"
+                                variant="flat"
+                                isIconOnly
+                                isLoading={isExporting}
+                                className="text-foreground-400 hover:text-foreground h-8 w-8"
+                                aria-label="Export data"
+                            >
+                                {!isExporting && <DownloadIcon size={14} />}
+                            </Button>
+                        </DropdownTrigger>
+                        <DropdownMenu
+                            aria-label="Export options"
+                            onAction={(key) =>
+                                handleExport(
+                                    key as "habits" | "completions" | "both",
+                                )
+                            }
+                        >
+                            <DropdownItem
+                                key="habits"
+                                description="Export all your habit definitions"
+                            >
+                                Export Habits
+                            </DropdownItem>
+                            <DropdownItem
+                                key="completions"
+                                description="Export all completion records"
+                            >
+                                Export Completions
+                            </DropdownItem>
+                            <DropdownItem
+                                key="both"
+                                description="Download both CSV files"
+                            >
+                                Export Both
+                            </DropdownItem>
+                        </DropdownMenu>
+                    </Dropdown>
+                </>
+            )}
         </div>
     );
 };

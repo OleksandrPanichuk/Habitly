@@ -1,8 +1,8 @@
 "use client";
 
-import { Button, Chip, Tooltip } from "@heroui/react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import {Button, Chip, Tooltip} from "@heroui/react";
+import {useMutation, useQueryClient} from "@tanstack/react-query";
+import {motion} from "framer-motion";
 import {
     ArchiveIcon,
     ArchiveRestoreIcon,
@@ -12,12 +12,18 @@ import {
     PencilIcon,
     Trash2Icon,
 } from "lucide-react";
-import { useState } from "react";
-import { toast } from "sonner";
-import { HABIT_CATEGORIES } from "@/features/habits/constants";
-import { useTRPC } from "@/trpc/client";
-import type { THabitWithStatus } from "@/types";
-import { NoteDialog } from "./NoteDialog";
+import {useState} from "react";
+import {toast} from "sonner";
+import {HABIT_CATEGORIES} from "@/features/habits/constants";
+import {
+    getHabitCompletionValue,
+    getHabitProgressPercent,
+    getHabitTargetLabel,
+    isHabitCompleteForValue,
+} from "@/lib/utils";
+import {useTRPC} from "@/trpc/client";
+import type {THabitWithStatus} from "@/types";
+import {NoteDialog} from "./NoteDialog";
 
 interface IHabitItemProps {
     data: THabitWithStatus;
@@ -61,7 +67,24 @@ export const HabitItem = ({
 }: IHabitItemProps) => {
     const trpc = useTRPC();
     const queryClient = useQueryClient();
-    const isCompleted = !!data.completedAt;
+    const isDeleted = !!data.deletedAt;
+    const isCompleted = isHabitCompleteForValue(
+        data,
+        data.completionValue,
+        data.completedAt,
+    );
+    const progressValue = getHabitCompletionValue(data, data.completionValue);
+    const progressPercent = getHabitProgressPercent(data, data.completionValue);
+    const targetLabel = getHabitTargetLabel(data);
+    const progressStep = data.goalType === "duration" ? 5 : 1;
+    const hasProgress = progressValue > 0;
+    const deletedLabel = data.deletedAt
+        ? new Date(data.deletedAt).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+          })
+        : null;
 
     const [noteOpen, setNoteOpen] = useState(false);
 
@@ -79,6 +102,13 @@ export const HabitItem = ({
                 await queryClient.cancelQueries({ queryKey: key });
                 const prev = queryClient.getQueryData(key);
 
+                const nextValue =
+                    data.goalType === "binary"
+                        ? 1
+                        : (data.targetValue ?? Math.max(progressValue, 1));
+                const shouldClear =
+                    data.goalType === "binary" ? isCompleted : isCompleted;
+
                 queryClient.setQueryData(
                     key,
                     (old: THabitWithStatus[] | undefined) =>
@@ -86,8 +116,11 @@ export const HabitItem = ({
                             h.id === data.id
                                 ? {
                                       ...h,
-                                      completedAt: isCompleted ? null : date,
-                                      completionNote: isCompleted
+                                      completedAt: shouldClear ? null : date,
+                                      completionValue: shouldClear
+                                          ? null
+                                          : nextValue,
+                                      completionNote: shouldClear
                                           ? null
                                           : h.completionNote,
                                   }
@@ -116,6 +149,70 @@ export const HabitItem = ({
                 });
                 queryClient.invalidateQueries({
                     queryKey: trpc.completions.getByDateRange.queryKey(),
+                });
+                queryClient.invalidateQueries({
+                    queryKey: trpc.analytics.getOverviewStats.queryKey(),
+                });
+                queryClient.invalidateQueries({
+                    queryKey: trpc.analytics.getInsights.queryKey(),
+                });
+            },
+        }),
+    );
+
+    const { mutate: setProgress, isPending: isSettingProgress } = useMutation(
+        trpc.completions.setProgress.mutationOptions({
+            onMutate: async ({ value }) => {
+                const key = trpc.habits.list.queryKey({
+                    date,
+                    includeArchived,
+                });
+                await queryClient.cancelQueries({ queryKey: key });
+                const prev = queryClient.getQueryData(key);
+
+                queryClient.setQueryData(
+                    key,
+                    (old: THabitWithStatus[] | undefined) =>
+                        (old ?? []).map((habit) =>
+                            habit.id === data.id
+                                ? {
+                                      ...habit,
+                                      completedAt: value > 0 ? date : null,
+                                      completionValue: value > 0 ? value : null,
+                                      completionNote:
+                                          value > 0
+                                              ? habit.completionNote
+                                              : null,
+                                  }
+                                : habit,
+                        ),
+                );
+
+                return { prev };
+            },
+            onError: (_err, _vars, ctx) => {
+                const key = trpc.habits.list.queryKey({
+                    date,
+                    includeArchived,
+                });
+                if (ctx?.prev) queryClient.setQueryData(key, ctx.prev);
+                toast.error("Failed to update progress.");
+            },
+            onSettled: () => {
+                queryClient.invalidateQueries({
+                    queryKey: trpc.habits.list.queryKey({ date }),
+                });
+                queryClient.invalidateQueries({
+                    queryKey: trpc.stats.getSummary.queryKey(),
+                });
+                queryClient.invalidateQueries({
+                    queryKey: trpc.stats.getCoachState.queryKey({}),
+                });
+                queryClient.invalidateQueries({
+                    queryKey: trpc.analytics.getOverviewStats.queryKey(),
+                });
+                queryClient.invalidateQueries({
+                    queryKey: trpc.analytics.getInsights.queryKey(),
                 });
             },
         }),
@@ -171,6 +268,11 @@ export const HabitItem = ({
         updateNote({ habitId: data.id, date, note });
     };
 
+    const handleAdjustProgress = (delta: number) => {
+        const nextValue = Math.max(0, progressValue + delta);
+        setProgress({ habitId: data.id, date, value: nextValue });
+    };
+
     const frequencyBadge = getFrequencyBadge(data);
     const hasNote = !!data.completionNote;
 
@@ -200,14 +302,20 @@ export const HabitItem = ({
                 />
 
                 <Tooltip
-                    content={isCompleted ? "Mark incomplete" : "Mark complete"}
+                    content={
+                        isDeleted
+                            ? "Deleted habits are read-only"
+                            : isCompleted
+                              ? "Mark incomplete"
+                              : "Mark complete"
+                    }
                     placement="top"
                     delay={400}
                 >
                     <button
                         type="button"
                         onClick={handleToggle}
-                        disabled={isToggling}
+                        disabled={isToggling || isDeleted}
                         className={[
                             "relative mt-0.5 shrink-0 w-6 h-6 rounded-full border-2 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
                             isCompleted
@@ -215,7 +323,9 @@ export const HabitItem = ({
                                 : "border-white/30 hover:border-white/60",
                             isToggling
                                 ? "opacity-50 cursor-wait"
-                                : "cursor-pointer",
+                                : isDeleted
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : "cursor-pointer",
                         ].join(" ")}
                         style={
                             isCompleted
@@ -226,10 +336,18 @@ export const HabitItem = ({
                                 : {}
                         }
                         title={
-                            isCompleted ? "Mark incomplete" : "Mark complete"
+                            isDeleted
+                                ? "Deleted habits are read-only"
+                                : isCompleted
+                                  ? "Mark incomplete"
+                                  : "Mark complete"
                         }
                         aria-label={
-                            isCompleted ? "Mark incomplete" : "Mark complete"
+                            isDeleted
+                                ? "Deleted habits are read-only"
+                                : isCompleted
+                                  ? "Mark incomplete"
+                                  : "Mark complete"
                         }
                     >
                         {isCompleted && (
@@ -297,6 +415,18 @@ export const HabitItem = ({
                                 {currentStreak}
                             </Chip>
                         )}
+
+                        {deletedLabel ? (
+                            <Chip
+                                size="sm"
+                                variant="flat"
+                                classNames={{
+                                    base: "h-5 border border-danger/20 bg-danger/10",
+                                }}
+                            >
+                                Deleted {deletedLabel}
+                            </Chip>
+                        ) : null}
                     </div>
 
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -331,7 +461,61 @@ export const HabitItem = ({
                         </span>
                     </div>
 
-                    {isCompleted && hasNote && (
+                    {data.goalType !== "binary" && (
+                        <div className="mt-2 rounded-xl border border-white/10 bg-black/10 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-xs font-medium text-foreground-300">
+                                        Today&apos;s progress
+                                    </p>
+                                    <p className="text-xs text-foreground-400">
+                                        {progressValue} / {targetLabel}
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    <Button
+                                        size="sm"
+                                        variant="flat"
+                                        isIconOnly
+                                        onPress={() =>
+                                            handleAdjustProgress(-progressStep)
+                                        }
+                                        isDisabled={
+                                            isSettingProgress ||
+                                            progressValue === 0 ||
+                                            isDeleted
+                                        }
+                                    >
+                                        -
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="flat"
+                                        isIconOnly
+                                        onPress={() =>
+                                            handleAdjustProgress(progressStep)
+                                        }
+                                        isDisabled={
+                                            isSettingProgress || isDeleted
+                                        }
+                                    >
+                                        +
+                                    </Button>
+                                </div>
+                            </div>
+                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                                <div
+                                    className="h-full rounded-full transition-all"
+                                    style={{
+                                        width: `${progressPercent}%`,
+                                        backgroundColor: data.color,
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {(isCompleted || hasProgress) && hasNote && (
                         <motion.button
                             type="button"
                             initial={{ opacity: 0, y: -4 }}
@@ -352,7 +536,7 @@ export const HabitItem = ({
                 </div>
 
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0 mt-0.5">
-                    {isCompleted && (
+                    {isCompleted && !isDeleted && (
                         <Tooltip
                             content={hasNote ? "Edit note" : "Add note"}
                             placement="top"
@@ -387,19 +571,21 @@ export const HabitItem = ({
                         </Button>
                     </Tooltip>
 
-                    <Tooltip content="Edit" placement="top" delay={400}>
-                        <Button
-                            isIconOnly
-                            variant="light"
-                            size="sm"
-                            onPress={() => onEdit(data)}
-                            className="text-foreground-400 hover:text-foreground min-w-7 w-7 h-7"
-                        >
-                            <PencilIcon size={14} />
-                        </Button>
-                    </Tooltip>
+                    {!isDeleted ? (
+                        <Tooltip content="Edit" placement="top" delay={400}>
+                            <Button
+                                isIconOnly
+                                variant="light"
+                                size="sm"
+                                onPress={() => onEdit(data)}
+                                className="text-foreground-400 hover:text-foreground min-w-7 w-7 h-7"
+                            >
+                                <PencilIcon size={14} />
+                            </Button>
+                        </Tooltip>
+                    ) : null}
 
-                    {onArchive && (
+                    {onArchive && !isDeleted ? (
                         <Tooltip
                             content={data.archivedAt ? "Restore" : "Archive"}
                             placement="top"
@@ -424,20 +610,22 @@ export const HabitItem = ({
                                 )}
                             </Button>
                         </Tooltip>
-                    )}
+                    ) : null}
 
-                    <Tooltip content="Delete" placement="top" delay={400}>
-                        <Button
-                            isIconOnly
-                            variant="light"
-                            size="sm"
-                            color="danger"
-                            onPress={() => onDelete(data)}
-                            className="text-foreground-400 hover:text-danger min-w-7 w-7 h-7"
-                        >
-                            <Trash2Icon size={14} />
-                        </Button>
-                    </Tooltip>
+                    {!isDeleted ? (
+                        <Tooltip content="Delete" placement="top" delay={400}>
+                            <Button
+                                isIconOnly
+                                variant="light"
+                                size="sm"
+                                color="danger"
+                                onPress={() => onDelete(data)}
+                                className="text-foreground-400 hover:text-danger min-w-7 w-7 h-7"
+                            >
+                                <Trash2Icon size={14} />
+                            </Button>
+                        </Tooltip>
+                    ) : null}
                 </div>
 
                 {isCompleted && (

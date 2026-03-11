@@ -70,7 +70,7 @@ export const NoteDialog = ({
 
                 <ModalBody className="pb-2">
                     <Textarea
-                        placeholder="How did it go? Any thoughts..."
+                        placeholder="What helped, what was hard, or what should you repeat tomorrow?"
                         value={value}
                         onValueChange={setValue}
                         minRows={3}

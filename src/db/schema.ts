@@ -4,6 +4,7 @@ import {
     date,
     index,
     integer,
+    jsonb,
     pgEnum,
     pgTable,
     text,
@@ -31,6 +32,16 @@ export const frequencyTypeEnum = pgEnum("frequency_type", [
     "custom",
 ]);
 export const frequencyUnitEnum = pgEnum("frequency_unit", ["days", "weeks"]);
+export const habitGoalTypeEnum = pgEnum("habit_goal_type", [
+    "binary",
+    "count",
+    "duration",
+]);
+export const subscriptionTierEnum = pgEnum("subscription_tier", [
+    "free",
+    "pro",
+    "lifetime",
+]);
 
 export const users = pgTable("users", {
     id: text("id").primaryKey(),
@@ -38,12 +49,49 @@ export const users = pgTable("users", {
     email: text("email").notNull().unique(),
     emailVerified: boolean("email_verified").default(false).notNull(),
     image: text("image"),
+    subscriptionTier: subscriptionTierEnum("subscription_tier")
+        .default("free")
+        .notNull(),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    subscriptionEndsAt: timestamp("subscription_ends_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
         .defaultNow()
         .$onUpdate(() => new Date())
         .notNull(),
 });
+
+export const userPreferences = pgTable(
+    "user_preferences",
+    {
+        userId: text("user_id")
+            .primaryKey()
+            .references(() => users.id, { onDelete: "cascade" }),
+        timezone: varchar("timezone", { length: 100 }).notNull().default("UTC"),
+        preferredCheckInTime: varchar("preferred_check_in_time", {
+            length: 5,
+        })
+            .notNull()
+            .default("19:00"),
+        weeklyReviewDay: integer("weekly_review_day").notNull().default(0),
+        reminderEmailEnabled: boolean("reminder_email_enabled")
+            .notNull()
+            .default(false),
+        reminderLastSentOn: date("reminder_last_sent_on", { mode: "date" }),
+        onboardingCompletedAt: timestamp("onboarding_completed_at"),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+        updatedAt: timestamp("updated_at")
+            .defaultNow()
+            .$onUpdate(() => new Date())
+            .notNull(),
+    },
+    (table) => [
+        index("user_preferences_onboarding_idx").on(
+            table.onboardingCompletedAt,
+        ),
+    ],
+);
 
 export const sessions = pgTable(
     "sessions",
@@ -124,7 +172,12 @@ export const habits = pgTable(
         color: varchar("color", { length: 7 }).notNull().default("#3b82f6"),
         icon: varchar("icon", { length: 10 }),
         category: habitCategoryEnum("category").default("other"),
+        goalType: habitGoalTypeEnum("goal_type").notNull().default("binary"),
+        targetValue: integer("target_value"),
+        targetUnit: varchar("target_unit", { length: 20 }),
+        reminderEnabled: boolean("reminder_enabled").notNull().default(false),
         archivedAt: timestamp("archived_at"),
+        deletedAt: timestamp("deleted_at"),
 
         createdAt: timestamp("created_at").defaultNow().notNull(),
         updatedAt: timestamp("updated_at")
@@ -143,6 +196,7 @@ export const completions = pgTable(
             .notNull()
             .references(() => habits.id, { onDelete: "cascade" }),
         date: date("date", { mode: "date" }).notNull(),
+        value: integer("value").notNull().default(1),
         note: text("note"),
         createdAt: timestamp("created_at").defaultNow().notNull(),
         updatedAt: timestamp("updated_at")
@@ -160,11 +214,42 @@ export const completions = pgTable(
     ],
 );
 
-export const userRelations = relations(users, ({ many }) => ({
+export const lifecycleEvents = pgTable(
+    "lifecycle_events",
+    {
+        id: uuid("id").primaryKey().defaultRandom(),
+        userId: text("user_id")
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        eventType: varchar("event_type", { length: 64 }).notNull(),
+        metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+    },
+    (table) => [
+        index("lifecycle_events_user_event_idx").on(
+            table.userId,
+            table.eventType,
+        ),
+    ],
+);
+
+export const userRelations = relations(users, ({ many, one }) => ({
     sessions: many(sessions),
     accounts: many(accounts),
     habits: many(habits),
+    preferences: one(userPreferences),
+    lifecycleEvents: many(lifecycleEvents),
 }));
+
+export const userPreferencesRelations = relations(
+    userPreferences,
+    ({ one }) => ({
+        user: one(users, {
+            fields: [userPreferences.userId],
+            references: [users.id],
+        }),
+    }),
+);
 
 export const sessionRelations = relations(sessions, ({ one }) => ({
     user: one(users, {
@@ -195,10 +280,25 @@ export const completionRelations = relations(completions, ({ one }) => ({
     }),
 }));
 
+export const lifecycleEventRelations = relations(
+    lifecycleEvents,
+    ({ one }) => ({
+        user: one(users, {
+            fields: [lifecycleEvents.userId],
+            references: [users.id],
+        }),
+    }),
+);
+
 export type THabit = typeof habits.$inferSelect;
 export type TCompletion = typeof completions.$inferSelect;
+export type TLifecycleEvent = typeof lifecycleEvents.$inferSelect;
 export type TUser = typeof users.$inferSelect;
+export type TUserPreferences = typeof userPreferences.$inferSelect;
 export type TSession = typeof sessions.$inferSelect;
 export type TAccount = typeof accounts.$inferSelect;
 export type TVerification = typeof verifications.$inferSelect;
 export type THabitCategory = (typeof habitCategoryEnum.enumValues)[number];
+export type THabitGoalType = (typeof habitGoalTypeEnum.enumValues)[number];
+export type TSubscriptionTier =
+    (typeof subscriptionTierEnum.enumValues)[number];

@@ -1,5 +1,6 @@
 "use client";
 
+import type { THabitFormValues } from "@/schemas";
 import {
     Button,
     Chip,
@@ -12,7 +13,6 @@ import {
 import { motion } from "framer-motion";
 import { CheckIcon, SparklesIcon, XIcon } from "lucide-react";
 import { useState } from "react";
-import type { THabitFormValues } from "@/schemas";
 import {
     HABIT_CATEGORIES,
     HABIT_TEMPLATES,
@@ -56,6 +56,10 @@ export const HabitTemplatesDialog = ({
             color: selected.color,
             icon: selected.icon,
             category: selected.category,
+            goalType: "binary",
+            targetValue: undefined,
+            targetUnit: undefined,
+            reminderEnabled: false,
             frequencyType: selected.frequencyType,
             frequencyDaysOfWeek: selected.frequencyDaysOfWeek ?? [],
             frequencyInterval: selected.frequencyInterval,
